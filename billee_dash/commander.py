@@ -297,6 +297,7 @@ class Commander:
             self.cache["updated"] = time.time()
             self._adopt_job()
             self._check_job()
+            self._idle_light()
             time.sleep(1.5)
 
     # ---- links
@@ -488,6 +489,7 @@ class Commander:
                 if not ok:
                     return self._fail(job, "Rover container", msg)
                 self._step(job, "Rover container", "done")
+                self._stop_idle_light()
             if needs_container(plan, "ground"):
                 self._step(job, "Ground container", "active")
                 ok, msg = self.ensure_container("ground")
@@ -542,6 +544,41 @@ class Commander:
         except (ClientError, ConnectionError) as e:
             current = next((s["name"] for s in job["steps"] if s["state"] == "active"), "start")
             self._fail(job, current, str(e))
+
+    # ---- the blink(1) mode light while nothing runs (status_light package, pattern idle)
+    IDLE_RETRY_S = 60.0
+
+    def _idle_light(self):
+        """Keep the idle light (slow yellow pulse) on while the rover container is up and no mode
+        runs. A mode's own light (rover.launch.py status_light:=...) replaces it."""
+        if not self.cfg.get("status_light", {}).get("idle", True):
+            return
+        job = self.job
+        if job and (job["state"] in ("starting", "running", "degraded", "stopping")
+                    or job.get("post_pending")):
+            return
+        rover = self.cache.get("rover") or {}
+        if "error" in rover or \
+                (rover.get("containers") or {}).get("rover", {}).get("state") != "running":
+            return
+        p = next((q for q in rover.get("procs", []) if q["id"] == modes.IDLE_LIGHT["id"]), None)
+        if p and p["state"] in ("starting", "running", "stopping"):
+            return
+        if p and p["state"] == "failed" and time.time() - (p.get("ended") or 0) < self.IDLE_RETRY_S:
+            return  # e.g. status_light not built: don't retry every 1.5 s
+        try:
+            self.run_step("rover", modes.IDLE_LIGHT, tag="light")
+        except (ClientError, ConnectionError):
+            pass
+
+    def _stop_idle_light(self):
+        """Before a mode starts: let the idle light go, so the mode's light owns the blink(1)."""
+        try:
+            client = self.client("rover")
+            if client.stop(modes.IDLE_LIGHT["id"]):
+                self.wait_proc("rover", modes.IDLE_LIGHT["id"], 10, cancellable=False)
+        except (ClientError, ConnectionError):
+            pass
 
     def _adopt_job(self):
         """After a dashboard restart, pick the running mode back up from the processes the

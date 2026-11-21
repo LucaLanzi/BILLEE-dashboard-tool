@@ -88,6 +88,24 @@ shell syntax.
 3. the rover launch, then 5 s later the ground launch;
 4. the links.
 
+### Mode light
+
+The rover's blink(1) USB LED shows the state (billee-software-2027's `status_light` package):
+
+| State | Light |
+|---|---|
+| Idle (nothing running) | yellow, slowly pulsing |
+| Teleop · Drive, Arm, Science | solid blue |
+| Autonomous, Astronaut | solid red |
+| the autonomous mode reached its goal (for later) | flashing green |
+
+- **Teleop and Astronaut:** each mode passes its colour to the rover launch
+  (`rover.launch.py status_light:=teleop`). Astronaut without driving runs the light node itself.
+- **Idle:** while nothing runs, the dashboard keeps the idle light going on the rover
+  (`status_light.idle`), and stops it before a mode starts.
+- **Setting:** **Mode light** turns the light off for one mode.
+- **State machine:** the dot in each state shows that state's light colour.
+
 ### Astronaut
 
 Runs billee-hardware-2027's astronaut-streamer on the Jetson host, in `~/billee-hardware-2027`
@@ -211,6 +229,7 @@ overrides any of them:
 | `links.*` | `http://{rover}:5000`, `:5001`, `ws://{rover}:8765`, `https://{rover}:8443` | `{rover}` is `rover.host` |
 | `astronaut.web_port` | `8080` | the astronaut server's status API, on the Jetson |
 | `foxglove.open_with` | `auto` | `desktop`, `web` or `auto` |
+| `status_light.idle` | `true` | show Idle on the rover's blink(1) (slow yellow pulse) while nothing runs |
 | `startup.open_rcm_gds` / `startup.start_containers` | `true` | at `make start` |
 | `mode.ground_delay_s` | `5` | wait between the rover and ground launches |
 

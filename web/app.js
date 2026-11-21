@@ -108,6 +108,14 @@ const svg = (tag, attrs = {}, ...kids) => {
   return el;
 };
 const SM_MODES = ["teleop-drive", "teleop-arm", "teleop-science", "autonomous", "astronaut"];
+// The blink(1) mode light's colour per state (status_light package): a dot in each state.
+const SM_LIGHT = { idle: ["idle", "yellow, slow pulse"], "teleop-drive": ["teleop", "solid blue"],
+  "teleop-arm": ["teleop", "solid blue"], "teleop-science": ["teleop", "solid blue"],
+  autonomous: ["autonomous", "solid red (flashing green when it arrives)"], astronaut: ["autonomous", "solid red"] };
+function smLight(id, x, y) {
+  const l = SM_LIGHT[id];
+  return l ? svg("circle", { cx: x, cy: y, r: 4.5, class: "sm-light " + l[0] }, svg("title", { text: `Mode light: ${l[1]}` })) : null;
+}
 const SM_LABEL = { "teleop-drive": "Teleop-Drive", "teleop-arm": "Teleop-Arm", "teleop-science": "Teleop-Science",
   autonomous: "Autonomous-Mode", astronaut: "Astronaut-Mode" };
 
@@ -138,7 +146,8 @@ function renderStateMachine() {
     smEdge("rstart", "M66,49 L94,49"),
     smNode("rdev", 96, 32, 200, 34, "Devcontainer Opens (L4T)", "The rover's l4t dev container (Systems → Rover container)"),
     smEdge("rdev", `M296,49 L${IDLE.x - 2},49`, "dashboard launches", 353, 42),
-    smNode("idle", IDLE.x, IDLE.y, IDLE.w, IDLE.h, "Idle (Dashboard Launched)", "The dashboard is up and nothing is running: pick a mode, then Run"),
+    smNode("idle", IDLE.x, IDLE.y, IDLE.w, IDLE.h, "Idle (Dashboard Launched)", "The dashboard is up and nothing is running: pick a mode, then Run\nMode light: yellow, slow pulse"),
+    smLight("idle", IDLE.x + IDLE.w - 10, IDLE.y + 10),
     svg("g", { id: "sm-test", class: "sm-test", visibility: "hidden" },
       svg("rect", { x: 622, y: 36, width: 196, height: 26, rx: 6 }),
       svg("text", { x: 720, y: 53, "text-anchor": "middle", text: "" })),
@@ -164,7 +173,7 @@ function renderStateMachine() {
         svg("rect", { x: x + 12, y: y + 69, width: W - 24, height: 22, rx: 5, class: "sm-sub" }),
         svg("text", { x: cx, y: y + 84, "text-anchor": "middle", class: "sm-sublabel", text: "Xbox controls Arm" }));
     }
-    kids.push(node);
+    kids.push(node, smLight(id, x + W - 10, y + 10));
   });
   // ground station box
   const rcm = CAT.links.rcm_gds.url;

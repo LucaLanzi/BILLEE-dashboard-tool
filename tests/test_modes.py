@@ -24,7 +24,8 @@ class TestModes(unittest.TestCase):
     def test_teleop_drive_defaults(self):
         pre, rover, ground, links = cmds("teleop-drive")
         self.assertEqual(pre, ["tooling/can-up can2", "tooling/can-clear-faults --iface can2"])
-        self.assertEqual(rover, ["ros2 launch chassis_bringup rover.launch.py mode:=real camera:=both"])
+        self.assertEqual(rover, ["ros2 launch chassis_bringup rover.launch.py mode:=real camera:=both "
+                                 "status_light:=teleop"])
         self.assertEqual(ground, ["ros2 launch chassis_bringup ground_station.launch.py "
                                   "use_sim_time:=false view:=both"])
         self.assertEqual(links, ["foxglove"])
@@ -39,7 +40,7 @@ class TestModes(unittest.TestCase):
         pre, rover, ground, _ = cmds("teleop-drive", drivetrain="sim", camera="cloud")
         self.assertEqual(pre, [])  # no CAN for the sim
         self.assertEqual(rover[0], "xvfb-run -a vglrun -d egl ros2 launch chassis_bringup "
-                                   "rover.launch.py mode:=sim camera:=cloud")
+                                   "rover.launch.py mode:=sim camera:=cloud status_light:=teleop")
         self.assertIn("use_sim_time:=true", ground[0])
 
     def test_real_options(self):
@@ -48,7 +49,7 @@ class TestModes(unittest.TestCase):
                                    can_up=False, clear_faults=False)
         self.assertEqual(rover[0], "ros2 launch chassis_bringup rover.launch.py mode:=real "
                                    "can_interface:=can3 fault_policy:=fault gear_ratio:=50 "
-                                   "vio:=true joy_control:=true")
+                                   "vio:=true joy_control:=true status_light:=teleop")
         self.assertIn("joystick:=false", ground[0])
 
     def test_arm(self):
@@ -130,10 +131,23 @@ class TestModes(unittest.TestCase):
                                          "astro_stop": True})
         self.assertEqual([s["id"] for s in plan["pre"]], ["astro-hotspot", "astro-server"])
         self.assertIn("hotspot.sh\" start", plan["pre"][0]["cmd"])
-        self.assertEqual([s["id"] for s in plan["rover"]], ["mode-astro-watch"])
+        self.assertEqual([s["id"] for s in plan["rover"]], ["mode-astro-watch", "mode-light"])
+        self.assertIn("-p pattern:=autonomous", plan["rover"][1]["cmd"])
         self.assertEqual(plan["ground"], [])
         self.assertEqual(plan["links"], ["astronaut"])
         self.assertEqual([s["id"] for s in plan["post"]], ["astro-stop"])
+
+    def test_mode_light(self):
+        light = lambda m, **o: [a for s in modes.build(m, o)["rover"]  # noqa: E731
+                                for a in s["cmd"].split() if "status_light:=" in a or "pattern:=" in a]
+        self.assertEqual(light("teleop-drive"), ["status_light:=teleop"])
+        self.assertEqual(light("teleop-arm"), ["status_light:=teleop"])
+        self.assertEqual(light("teleop-science"), ["status_light:=teleop"])
+        self.assertEqual(light("astronaut"), ["status_light:=autonomous"])
+        self.assertEqual(light("astronaut", astro_drive=False), ["pattern:=autonomous"])
+        self.assertEqual(light("teleop-drive", status_light=False), [])
+        self.assertEqual(light("bench"), [])
+        self.assertIn("pattern:=idle", modes.IDLE_LIGHT["cmd"])
 
     def test_bench_without_ground_container(self):
         plan = modes.build("bench", {"can_up": False, "clear_faults": False}, ground=False)

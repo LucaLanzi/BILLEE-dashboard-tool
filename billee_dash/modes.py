@@ -104,6 +104,12 @@ OPTIONS = {
         "label": "Extra ground args", "side": "ground", "type": "args", "default": "",
         "placeholder": "name:=value ...", "help": "Appended to the ground station launch.",
     },
+    "status_light": {
+        "label": "Mode light (blink(1))", "side": "rover", "type": "bool", "default": True,
+        "help": "Show the mode on the rover's blink(1): solid blue in Teleop modes, solid red in "
+                "Autonomous / Astronaut (rover.launch.py status_light:=, package status_light). "
+                "While nothing runs, the dashboard shows Idle as a slow yellow pulse.",
+    },
     # Astronaut
     "astro_drive": {
         "label": "Drive the rover too", "side": "rover", "type": "bool", "basic": True,
@@ -155,8 +161,24 @@ OPTIONS = {
 }
 
 DRIVE_OPTIONS = ["drivetrain", "camera", "gamepad", "can_up", "clear_faults", "can_interface",
-                 "fault_policy", "vio", "odom_tf", "gear_ratio", "arm_camera", "rover_extra",
-                 "view", "rviz", "ground_foxglove", "fixed_frame", "ground_extra"]
+                 "fault_policy", "vio", "odom_tf", "gear_ratio", "arm_camera", "status_light",
+                 "rover_extra", "view", "rviz", "ground_foxglove", "fixed_frame", "ground_extra"]
+
+# The blink(1) mode light per state (status_light package in billee-software-2027): Teleop modes
+# solid blue, Autonomous and Astronaut solid red. Idle (yellow pulse) is the dashboard's
+# IDLE_LIGHT, shown while nothing runs; "arrived" (flashing green) is for the autonomous mode to
+# publish on /status_light/pattern when it reaches its goal.
+MODE_LIGHT = {"teleop-drive": "teleop", "teleop-arm": "teleop", "teleop-science": "teleop",
+              "autonomous": "autonomous", "astronaut": "autonomous"}
+IDLE_LIGHT = {"id": "status-light-idle", "label": "mode light (idle)", "where": "container",
+              "ros": True, "cmd": "ros2 run status_light status_light --ros-args -p pattern:=idle"}
+
+
+def light_step(pattern):
+    """The light on its own, for a mode that runs no rover.launch.py."""
+    return {"id": "mode-light", "label": f"mode light ({pattern})", "where": "container",
+            "ros": True,
+            "cmd": f"ros2 run status_light status_light --ros-args -p pattern:={pattern}"}
 
 # --------------------------------------------------------------------------- modes
 MODES = [
@@ -293,7 +315,7 @@ def joy_steps(port=JOY_RELAY_PORT):
     ]
 
 
-def _drive(plan, o, real, iface, cfg):
+def _drive(plan, o, real, iface, cfg, light=None):
     """rover.launch.py + ground_station.launch.py (+ the browser-gamepad relay)."""
     args = [f"mode:={o['drivetrain']}"]
     if o["camera"] != "none":
@@ -313,6 +335,8 @@ def _drive(plan, o, real, iface, cfg):
         args.append(f"arm_camera:={o['arm_camera']}")
     if o["gamepad"] == "rover":
         args.append("joy_control:=true")
+    if light:
+        args.append(f"status_light:={light}")
     if o["rover_extra"]:
         args.append(o["rover_extra"])
     prefix = "" if real else "xvfb-run -a vglrun -d egl "
@@ -386,8 +410,11 @@ def build(mode_id, values, cfg=None, ground=True):
         if not o["astro_drive"]:
             plan["links"] = ["astronaut"]
 
+    light = MODE_LIGHT.get(mode_id) if o.get("status_light", True) else None
     if drive:
-        _drive(plan, o, real, iface, cfg)
+        _drive(plan, o, real, iface, cfg, light)
+    elif light:  # no rover.launch.py to carry it (Astronaut without driving)
+        plan["rover"].append(light_step(light))
     if mode_id == "teleop-arm":
         if o["arm_hw"]:
             plan["rover"].append({

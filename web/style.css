@@ -125,6 +125,10 @@ h3 { font-size: 13px; margin: 0 0 12px; color: var(--muted); font-weight: 600; l
 .sm-node.warn > rect { stroke: var(--warn); stroke-width: 2.2; fill: rgba(240, 180, 41, .12); }
 .sm-node.bad > rect { stroke: var(--bad); stroke-dasharray: 4 3; }
 .sm-node.dim .sm-label { fill: var(--dim); }
+.sm-light { stroke: var(--panel); stroke-width: 1.5; }
+.sm-light.teleop { fill: #3d7bff; }
+.sm-light.autonomous { fill: #ff4d4d; }
+.sm-light.idle { fill: #f2b33d; animation: pulse 1.6s infinite alternate; }
 .sm-test rect { fill: rgba(90, 169, 255, .1); stroke: var(--blue); }
 .sm-test.on rect { fill: rgba(63, 209, 139, .1); stroke: var(--ok); }
 .sm-test.warn rect { stroke: var(--warn); }

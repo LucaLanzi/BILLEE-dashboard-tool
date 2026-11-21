@@ -44,6 +44,9 @@
     "iface": "can2",
     "bitrate": 500000
   },
+  "status_light": {
+    "idle": true
+  },
   "startup": {
     "open_rcm_gds": true,
     "start_containers": true
