@@ -25,13 +25,13 @@ OPTIONS = {
     },
     "camera": {
         "label": "ZED 2i", "side": "rover", "type": "select", "basic": True,
-        "choices": [["none", "Off"], ["cloud", "Point cloud"],
-                    ["openpose", "OpenPose + video"],
-                    ["both", "Point cloud + OpenPose + video"]],
+        "choices": [["none", "Off"], ["video", "Video"], ["cloud", "Video + point cloud"],
+                    ["both", "Video + point cloud + OpenPose"],
+                    ["openpose", "Video + OpenPose"]],
         "default": "none",
-        "help": "rover.launch.py camera:=. The ZED's video is OpenPose's rendering "
-                "(/people/debug_image), so it comes with OpenPose: there is no video without it. "
-                "OpenPose needs ~3 GB free RAM on the Jetson.",
+        "help": "rover.launch.py camera:=video|cloud|both|openpose. The video "
+                "(/zed/image/compressed) shows the skeletons when OpenPose runs. OpenPose needs "
+                "~3 GB free RAM on the Jetson.",
     },
     "gamepad": {
         "label": "Gamepad on", "side": "both", "type": "select", "basic": True,
@@ -84,8 +84,8 @@ OPTIONS = {
     },
     "view": {
         "label": "RViz layout", "side": "ground", "type": "select",
-        "choices": [["auto", "Match the ZED"], ["drivetrain", "Drivetrain"], ["cloud", "Point cloud"],
-                    ["openpose", "OpenPose"], ["both", "Both"]],
+        "choices": [["auto", "Match the ZED"], ["drivetrain", "Drivetrain"], ["video", "Video"],
+                    ["cloud", "Point cloud"], ["openpose", "OpenPose"], ["both", "Both"]],
         "default": "auto", "help": "ground_station.launch.py view:=.",
     },
     "rviz": {
@@ -186,14 +186,14 @@ def light_step(pattern):
 MODES = [
     {
         "id": "teleop-drive", "group": "mission", "title": "Teleop · Drive", "short": "Drive",
-        "summary": "5 cameras · ZED 2i point cloud + OpenPose video · Xbox drives the rover",
-        "options": DRIVE_OPTIONS, "defaults": {"camera": "both"},
+        "summary": "5 cameras · ZED 2i video + point cloud · Xbox drives the rover",
+        "options": DRIVE_OPTIONS, "defaults": {"camera": "cloud"},
         "links": ["foxglove"],
     },
     {
         "id": "teleop-arm", "group": "mission", "title": "Teleop · Arm", "short": "Arm",
         "summary": "Teleop · Drive plus the arm. Xbox mode toggle (drive / arm)",
-        "options": ["arm_hw", "arm_jog"] + DRIVE_OPTIONS, "defaults": {"camera": "both"},
+        "options": ["arm_hw", "arm_jog"] + DRIVE_OPTIONS, "defaults": {"camera": "cloud"},
         "links": ["foxglove"],
         "todo": "Xbox drive/arm toggle and motion planning are not built yet.",
     },

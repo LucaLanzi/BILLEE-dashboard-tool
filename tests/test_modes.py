@@ -24,11 +24,20 @@ class TestModes(unittest.TestCase):
     def test_teleop_drive_defaults(self):
         pre, rover, ground, links = cmds("teleop-drive")
         self.assertEqual(pre, ["tooling/can-up can2", "tooling/can-clear-faults --iface can2"])
-        self.assertEqual(rover, ["ros2 launch chassis_bringup rover.launch.py mode:=real camera:=both "
+        self.assertEqual(rover, ["ros2 launch chassis_bringup rover.launch.py mode:=real camera:=cloud "
                                  "status_light:=teleop"])
         self.assertEqual(ground, ["ros2 launch chassis_bringup ground_station.launch.py "
-                                  "use_sim_time:=false view:=both"])
+                                  "use_sim_time:=false view:=cloud"])
         self.assertEqual(links, ["foxglove"])
+
+    def test_zed_choices(self):
+        cam = lambda c: [s["cmd"] for s in modes.build("teleop-drive", {"camera": c})["rover"]  # noqa: E731
+                         ][0].split()
+        for c in ("video", "cloud", "openpose", "both"):
+            self.assertIn(f"camera:={c}", cam(c))
+            view = modes.build("teleop-drive", {"camera": c})["ground"][0]["cmd"]
+            self.assertIn(f"view:={c}", view)
+        self.assertFalse([a for a in cam("none") if a.startswith("camera:=")])
 
     def test_science_has_no_zed_and_opens_scm(self):
         _, rover, ground, links = cmds("teleop-science")

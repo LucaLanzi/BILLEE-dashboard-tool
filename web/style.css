@@ -53,8 +53,8 @@ h3 { font-size: 13px; margin: 0 0 12px; color: var(--muted); font-weight: 600; l
   padding: 10px 20px; border-bottom: 1px solid var(--line); background: var(--panel-2);
   position: sticky; top: 0; z-index: 10;
 }
-.brand { display: flex; align-items: baseline; gap: 10px; }
-.logo { font: 800 20px var(--mono); letter-spacing: .14em; color: var(--accent); }
+.brand { display: flex; align-items: center; gap: 10px; }
+.logo { display: block; height: 48px; width: auto; }
 .sub { color: var(--muted); font-size: 13px; }
 .pills { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
 .pill {

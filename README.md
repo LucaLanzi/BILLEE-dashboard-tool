@@ -63,7 +63,7 @@ before **Run**. The commands are the ones in billee-software-2027's `docs/runnin
 
 | Mode | Rover | Ground station | Opens |
 |---|---|---|---|
-| **Teleop · Drive** | `can-up` → `can-clear-faults` → `rover.launch.py mode:=real camera:=both` | `ground_station.launch.py use_sim_time:=false view:=both` | Foxglove |
+| **Teleop · Drive** | `can-up` → `can-clear-faults` → `rover.launch.py mode:=real camera:=cloud` (ZED video + point cloud) | `ground_station.launch.py use_sim_time:=false view:=cloud` | Foxglove |
 | **Teleop · Arm** | Drive, + `arm_bringup arm.launch.py` (option) | Drive, + `arm_teleop.launch.py joy:=false` (option) | Foxglove |
 | **Teleop · Science** | Drive without the ZED 2i (`camera:=none`) | `view:=drivetrain` | Foxglove, Science GDS |
 | Autonomous | TODO | | |
@@ -73,9 +73,8 @@ before **Run**. The commands are the ones in billee-software-2027's `docs/runnin
 
 The settings cover every argument in `running.md`:
 - **drivetrain:** real ODESCs, or Gazebo on the Jetson (`xvfb-run -a vglrun -d egl`);
-- **ZED:** off, point cloud, OpenPose + video, or point cloud + OpenPose + video
-  (`camera:=none|cloud|openpose|both`). The ZED's video is OpenPose's rendering, so there is no
-  video without OpenPose;
+- **ZED:** Off, Video, Video + point cloud, Video + point cloud + OpenPose, or Video + OpenPose
+  (`camera:=none|video|cloud|both|openpose`). The video shows the skeletons when OpenPose runs;
 - **gamepad:** where it's read ([below](#gamepad));
 - **CAN:** `can_interface`, `fault_policy`, `gear_ratio`, `vio`, `odom_tf`, `arm_camera`;
 - **ground station:** the RViz `view`, `fixed_frame`, RViz and Foxglove-bridge toggles;
