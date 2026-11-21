@@ -1,0 +1,48 @@
+{
+  "dashboard": {
+    "port": 7780,
+    "bind": "127.0.0.1",
+    "state_dir": "~/.billee-dash"
+  },
+  "rover": {
+    "host": "10.110.0.230",
+    "user": "",
+    "ssh_port": 22,
+    "ssh_key": "",
+    "repo": "~/billee-software-2027",
+    "devcontainer": ".devcontainer/l4t/devcontainer.json",
+    "container_name": "",
+    "pixi_env": "l4t",
+    "pixi_run": "pixi run -e {env}",
+    "agent_port": 8770,
+    "services": ["billee-rcm-lan-gds", "billee-scm-lan-gds"]
+  },
+  "ground": {
+    "host": "10.110.0.231",
+    "repo": "",
+    "devcontainer": ".devcontainer/devcontainer.json",
+    "container_name": "",
+    "pixi_env": "default",
+    "pixi_run": "pixi run -e {env}"
+  },
+  "links": {
+    "rcm_gds": "http://10.110.0.230:5000",
+    "scm_gds": "http://10.110.0.230:5001",
+    "foxglove_ws": "ws://10.110.0.230:8765"
+  },
+  "foxglove": {
+    "open_with": "auto"
+  },
+  "can": {
+    "iface": "can2",
+    "bitrate": 500000
+  },
+  "startup": {
+    "open_rcm_gds": true,
+    "start_containers": true
+  },
+  "mode": {
+    "ground_delay_s": 5
+  },
+  "ros_domain_id": 42
+}

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BILLEE Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23111821'/%3E%3Ctext x='16' y='23' font-family='monospace' font-size='20' font-weight='700' text-anchor='middle' fill='%23f2b33d'%3EB%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="splash" aria-hidden="true">
+<pre>
+ ██████╗ ██╗██╗     ██╗     ███████╗███████╗
+ ██╔══██╗██║██║     ██║     ██╔════╝██╔════╝
+ ██████╔╝██║██║     ██║     █████╗  █████╗
+ ██╔══██╗██║██║     ██║     ██╔══╝  ██╔══╝
+ ██████╔╝██║███████╗███████╗███████╗███████╗
+ ╚═════╝ ╚═╝╚══════╝╚══════╝╚══════╝╚══════╝
+</pre>
+<p>Rover Control Module · Science Control Module</p>
+<p class="dim">Powered by ROS2 Humble and F´ Flight Software (NASA/JPL)</p>
+</div>
+
+<header class="top">
+  <div class="brand">
+    <span class="logo">BILLEE</span>
+    <span class="sub">Mission Dashboard</span>
+  </div>
+  <div class="pills" id="pills"></div>
+  <nav class="quick" id="quick"></nav>
+</header>
+
+<main class="grid">
+  <!-- Modes -->
+  <section class="col modes" aria-label="Modes">
+    <div class="state-strip" id="stateStrip"></div>
+    <h2>Mission</h2>
+    <div class="mode-list" id="modesMission"></div>
+    <h2>Test</h2>
+    <div class="mode-list" id="modesTest"></div>
+  </section>
+
+  <!-- Selected mode -->
+  <section class="col card mode-panel" id="modePanel" aria-label="Selected mode"></section>
+
+  <!-- Systems + CAN -->
+  <section class="col side" aria-label="Systems">
+    <div class="card" id="systems">
+      <h3>Systems</h3>
+      <div id="sysBody"></div>
+    </div>
+    <div class="card" id="can">
+      <h3>CAN · drivetrain</h3>
+      <div class="can-row">
+        <label>Interface <input id="canIface" spellcheck="false" autocomplete="off"></label>
+        <label>Bitrate <input id="canBitrate" inputmode="numeric" autocomplete="off"></label>
+      </div>
+      <div class="btn-row">
+        <button data-can="up">Up</button>
+        <button data-can="status">Status</button>
+        <button data-can="down" class="ghost">Down</button>
+      </div>
+      <div class="sub-h">ODESC nodes <button class="link" id="nodesAll">all</button></div>
+      <div class="chips" id="canNodes"></div>
+      <div class="btn-row">
+        <button data-can="fault-status">Read errors</button>
+        <button data-can="clear">Clear faults</button>
+      </div>
+      <div class="btn-row">
+        <button data-can="reboot" class="warn">Clear + reboot stuck</button>
+        <button data-can="force-reboot" class="danger">Reboot</button>
+      </div>
+      <p class="hint" id="canHint"></p>
+    </div>
+  </section>
+</main>
+
+<!-- Verbose output -->
+<section class="drawer" id="drawer" aria-label="Output">
+  <div class="drawer-bar">
+    <button class="drawer-toggle" id="drawerToggle" aria-expanded="false">
+      <span class="caret">▸</span> Output
+    </button>
+    <div class="tabs" id="outTabs" role="tablist">
+      <button role="tab" data-side="rover" class="on">Rover <span class="tag">l4t</span></button>
+      <button role="tab" data-side="ground">Ground <span class="tag">x86</span></button>
+      <button role="tab" data-side="dash">Dashboard</button>
+      <button role="tab" data-side="all">All</button>
+    </div>
+    <select id="procFilter" aria-label="Process"></select>
+    <div class="drawer-tools">
+      <label class="check"><input type="checkbox" id="follow" checked> Follow</label>
+      <button class="ghost" id="outClear">Clear view</button>
+      <button class="ghost" id="outBig" title="Taller">⤢</button>
+    </div>
+  </div>
+  <div class="drawer-body">
+    <div class="procs" id="procs"></div>
+    <pre class="out" id="out"></pre>
+  </div>
+</section>
+
+<div id="toast" role="status" aria-live="polite"></div>
+<dialog id="confirm">
+  <form method="dialog">
+    <p id="confirmText"></p>
+    <div class="btn-row end">
+      <button value="no" class="ghost">Cancel</button>
+      <button value="yes" class="danger" id="confirmYes">Go</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

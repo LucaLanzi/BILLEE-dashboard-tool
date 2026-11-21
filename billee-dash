@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# billee-dash: start the BILLEE dashboard (normally through `make start` in billee-software-2027).
+#   ./billee-dash                 open http://localhost:7780 (+ the RCM GDS)
+#   ./billee-dash --no-browser    server only
+#   ./billee-dash --help          every option
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+command -v python3 >/dev/null || { echo "billee-dash: python3 is missing (run make setup-dash)" >&2; exit 1; }
+cd "$here"
+exec python3 -m billee_dash "$@"
