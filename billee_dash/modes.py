@@ -33,9 +33,13 @@ OPTIONS = {
     },
     "gamepad": {
         "label": "Gamepad on", "side": "both", "type": "select", "basic": True,
-        "choices": [["ground", "Ground station"], ["rover", "Rover (bench)"]],
+        "choices": [["ground", "Ground station"], ["browser", "This browser"],
+                    ["rover", "Rover (bench)"]],
         "default": "ground",
-        "help": "Teleop must run on exactly one machine, or every command is sent twice.",
+        "help": "Where the gamepad is read. Ground station: joy_node in the x86 container. "
+                "This browser: the dashboard page reads it (works on a Mac, no container) and "
+                "sends it to the rover. Rover: plugged into the Jetson. Teleop runs on exactly "
+                "one machine, or every command is sent twice.",
     },
     "can_up": {
         "label": "Bring CAN up first", "side": "rover", "type": "bool", "default": True,
@@ -249,17 +253,43 @@ def _fmt_num(v):
     return str(int(v)) if float(v).is_integer() else str(v)
 
 
-def build(mode_id, values, cfg=None):
+JOY_RELAY_PORT = 8771
+NO_GROUND_MSG = "needs the x86 ground-station container, which this machine doesn't use"
+
+
+def joy_steps(port=JOY_RELAY_PORT):
+    """Rover processes for "Gamepad on: This browser": the relay that turns the dashboard's
+    gamepad stream into /joy, and the same tank-drive node teleop.launch.py runs."""
+    return [
+        {"id": "mode-joy-relay", "label": "gamepad relay", "where": "container", "ros": True,
+         "prep": 'mkdir -p /tmp/billee-dash && printf "%s" "$BILLEE_JOY_RELAY" > '
+                 '/tmp/billee-dash/joy_relay.py',
+         "embed": "joy_relay.py",
+         "cmd": f"python3 -u /tmp/billee-dash/joy_relay.py {int(port)}"},
+        {"id": "mode-joy-teleop", "label": "joy_tank_drive", "where": "container", "ros": True,
+         "cmd": "ros2 run teleop joy_tank_drive --ros-args --params-file "
+                "src/teleop/config/joystick.yaml "
+                "-r /cmd_vel:=/diff_drive_controller/cmd_vel_unstamped"},
+    ]
+
+
+def build(mode_id, values, cfg=None, ground=True):
     """-> {"mode", "options", "pre": [step], "rover": [proc], "ground": [proc], "links": [...]}.
 
     A step/proc is {"id", "label", "cmd", "where": "host"|"container", "ros": bool}.
-    "ros" commands run through pixi in the container's ros2_ws."""
+    "ros" commands run through pixi in the container's ros2_ws.
+    ground=False: this machine has no ground-station container (e.g. a Mac): nothing runs
+    on the ground side, and the gamepad comes from the browser."""
     mode = MODE_BY_ID.get(mode_id)
     if mode is None:
         raise OptionError(f"unknown mode {mode_id!r}")
     if mode.get("disabled"):
         raise OptionError(f"{mode['title']} is not available yet: {mode.get('todo', '')}")
-    o = validate(mode, values)
+    if not ground and mode_id == "sim-ground":
+        raise OptionError(f"{mode['title']} {NO_GROUND_MSG}")
+    o = validate(mode, ground_defaults(mode, values) if not ground else values)
+    if not ground and o.get("gamepad") == "ground":
+        raise OptionError(f"Gamepad on: Ground station {NO_GROUND_MSG}. Pick This browser.")
     plan = {"mode": mode_id, "options": o, "pre": [], "rover": [], "ground": [],
             "links": list(mode.get("links", []))}
 
@@ -296,6 +326,10 @@ def build(mode_id, values, cfg=None):
         plan["rover"].append({
             "id": "mode-rover", "label": "rover.launch.py", "where": "container", "ros": True,
             "cmd": f"{prefix}ros2 launch chassis_bringup rover.launch.py {' '.join(args)}"})
+        if o["gamepad"] == "browser":
+            port = (cfg or {}).get("rover", {}).get("joy_relay_port", JOY_RELAY_PORT)
+            plan["rover"] += joy_steps(port)
+            plan["gamepad"] = True
 
         view = o["view"] if o["view"] != "auto" else (
             o["camera"] if o["camera"] != "none" else "drivetrain")
@@ -306,7 +340,7 @@ def build(mode_id, values, cfg=None):
             gargs.append("rviz:=false")
         if not o["ground_foxglove"]:
             gargs.append("foxglove:=false")
-        if o["gamepad"] == "rover":
+        if o["gamepad"] != "ground":
             gargs.append("joystick:=false")
         if o["ground_extra"]:
             gargs.append(o["ground_extra"])
@@ -324,6 +358,8 @@ def build(mode_id, values, cfg=None):
                 plan["ground"].append({
                     "id": "mode-arm-jog", "label": "arm_teleop.launch.py", "where": "container",
                     "ros": True, "cmd": "ros2 launch arm_bringup arm_teleop.launch.py joy:=false"})
+    if not ground:
+        plan["ground"] = []
 
     elif mode_id == "sim-ground":
         args = ["foxglove:=true", f"gui:={_b(o['gui'])}", f"navigation:={_b(o['navigation'])}",
@@ -410,6 +446,22 @@ def can_command(action, iface="can2", bitrate=None, nodes=None):
     raise OptionError(f"unknown CAN action {action!r}")
 
 
-def catalog():
+def ground_defaults(mode, values):
+    """Without a ground container the gamepad defaults to the browser."""
+    out = dict(values or {})
+    if "gamepad" in mode["options"] and "gamepad" not in out:
+        out["gamepad"] = "browser"
+    return out
+
+
+def catalog(ground=True):
     """What the page needs to draw the modes."""
-    return {"options": OPTIONS, "modes": [dict(m, values=defaults(m)) for m in MODES]}
+    out = []
+    for m in MODES:
+        m = dict(m, values=defaults(m))
+        if not ground:
+            m["values"] = validate(m, ground_defaults(m, {})) if not m.get("disabled") else m["values"]
+            if m["id"] == "sim-ground":
+                m.update(disabled=True, todo=f"This mode {NO_GROUND_MSG}.")
+        out.append(m)
+    return {"options": OPTIONS, "modes": out, "ground": ground}

@@ -22,6 +22,7 @@ import collections
 import json
 import mimetypes
 import os
+import platform
 import re
 import signal
 import socket
@@ -79,7 +80,26 @@ def load_config(path=None):
         ground["repo"] = parent if os.path.isdir(os.path.join(parent, "ros2_ws")) else \
             os.path.expanduser("~/billee-software-2027")
     ground["repo"] = os.path.realpath(os.path.expanduser(ground["repo"]))
+    # mode: container (the x86 dev container runs the ground side) | none (nothing runs here:
+    # a Mac, or any machine without the container) | auto (none on macOS, else container)
+    gmode = ground.get("mode", "auto")
+    if gmode == "auto":
+        gmode = "none" if platform.system() == "Darwin" else "container"
+    ground["enabled"] = gmode == "container"
     return cfg
+
+
+def open_url(url):
+    """Open a URL or app link (foxglove://) on this machine."""
+    opener = {"Darwin": ["open"], "Linux": ["xdg-open"]}.get(platform.system())
+    if opener:
+        try:
+            subprocess.Popen(opener + [url], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+            return True
+        except OSError:
+            pass
+    return webbrowser.open_new_tab(url)
 
 
 def can_nodes(repo):
@@ -135,6 +155,49 @@ class Output:
         return {"lines": out[-limit:], "last": last}
 
 
+# --------------------------------------------------------------------------- gamepad
+class JoyLink:
+    """Streams the page's gamepad state to the rover's joy_relay as JSON lines, through the
+    SSH tunnel (or straight to localhost in --rover-local mode). Sends are best effort: a lost
+    message is replaced 50 ms later, and the relay zeroes /joy when they stop coming."""
+
+    def __init__(self, rover_link):
+        self.rover_link = rover_link
+        self.sock = None
+        self.addr = None
+        self.lock = threading.Lock()
+
+    def send(self, axes, buttons):
+        port = self.rover_link.joy_port
+        if not port:
+            raise ClientError("rover link is down")
+        line = (json.dumps({"axes": axes, "buttons": buttons}) + "\n").encode()
+        with self.lock:
+            if self.sock is not None and self.addr != port:
+                self.close()
+            if self.sock is None:
+                try:
+                    s = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+                except OSError as e:
+                    raise ConnectionError(f"gamepad relay not reachable: {e}")
+                s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                s.settimeout(0.3)
+                self.sock, self.addr = s, port
+            try:
+                self.sock.sendall(line)
+            except OSError as e:
+                self.close()
+                raise ConnectionError(f"gamepad relay: {e}")
+
+    def close(self):
+        if self.sock is not None:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+        self.sock = None
+
+
 # --------------------------------------------------------------------------- commander
 class Commander:
     def __init__(self, cfg):
@@ -144,6 +207,8 @@ class Commander:
         self.ground_agent = agent_mod.Agent("ground")
         self.ground = LocalClient(self.ground_agent)
         self.rover_link = RoverLink(cfg["rover"], self.state_dir, self.note)
+        self.ground_enabled = cfg["ground"]["enabled"]
+        self.joy = JoyLink(self.rover_link)
         self.job = None
         self.job_lock = threading.Lock()
         self.cache = {"rover": None, "ground": None, "links": {}, "updated": 0}
@@ -204,7 +269,8 @@ class Commander:
         services = self.cfg["rover"].get("services", [])
         while True:
             try:
-                self.cache["ground"] = self.ground.status([self.container_spec("ground")])
+                self.cache["ground"] = self.ground.status(
+                    [self.container_spec("ground")] if self.ground_enabled else [])
             except Exception as e:
                 self.cache["ground"] = {"error": str(e)}
             try:
@@ -230,15 +296,20 @@ class Commander:
             return desktop
         if how == "web":
             return web
-        # auto: the desktop app if it registered its foxglove:// handler, else the web app
+        # auto: the desktop app if it is installed, else the web app
+        return desktop if self.foxglove_desktop_installed() else web
+
+    def foxglove_desktop_installed(self):
+        if platform.system() == "Darwin":
+            return any(os.path.isdir(os.path.join(d, app))
+                       for d in ("/Applications", os.path.expanduser("~/Applications"))
+                       for app in ("Foxglove.app", "Foxglove Studio.app"))
         try:
             res = subprocess.run(["xdg-mime", "query", "default", "x-scheme-handler/foxglove"],
                                  capture_output=True, text=True, timeout=3)
-            if res.stdout.strip():
-                return desktop
+            return bool(res.stdout.strip())
         except (OSError, subprocess.TimeoutExpired):
-            pass
-        return web
+            return False
 
     def link_url(self, name):
         links = self.cfg["links"]
@@ -253,15 +324,9 @@ class Commander:
     def open_link(self, name):
         url = self.link_url(name)
         self.note(f"opening {name}: {url}")
-        if url.startswith("foxglove://"):
-            try:
-                subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL,
-                                 stderr=subprocess.DEVNULL, start_new_session=True)
-                return url
-            except OSError:
-                url = self.link_url("foxglove").replace("foxglove://open?",
-                                                        "https://app.foxglove.dev/~/view?")
-        webbrowser.open_new_tab(url)
+        if not open_url(url) and url.startswith("foxglove://"):
+            url = url.replace("foxglove://open?", "https://app.foxglove.dev/~/view?")
+            webbrowser.open_new_tab(url)
         return url
 
     # ---- commands
@@ -276,7 +341,12 @@ class Commander:
             if step.get("ros"):
                 pixi = c.get("pixi_run", "pixi run -e {env}").format(env=c["pixi_env"])
                 cmd = f"cd ros2_ws && exec {pixi} {cmd}"
+            if step.get("prep"):
+                cmd = f"{step['prep']} && {cmd}"
             env = {"ROS_DOMAIN_ID": str(self.cfg.get("ros_domain_id", 42))}
+            if step.get("embed"):  # a dashboard file the command writes out in the container
+                with open(os.path.join(PKG_DIR, step["embed"])) as f:
+                    env["BILLEE_JOY_RELAY"] = f.read()
             if side == "ground" and os.environ.get("DISPLAY"):
                 env["DISPLAY"] = os.environ["DISPLAY"]
             spec["env"] = env
@@ -314,6 +384,16 @@ class Commander:
             return False, "timed out (or cancelled) starting the container"
         return done["rc"] == 0, f"exit {done['rc']}"
 
+    def gamepad(self, body):
+        """POST /api/joy: one gamepad state from the page (Linux joy_node layout)."""
+        job = self.job
+        if not job or job["state"] not in ("running", "degraded") or not job.get("gamepad"):
+            raise ClientError("no running mode takes the browser gamepad")
+        axes = [max(-1.0, min(1.0, float(a))) for a in body["axes"]][:16]
+        buttons = [1 if b else 0 for b in body["buttons"]][:32]
+        self.joy.send(axes, buttons)
+        return {"ok": True}
+
     def can_action(self, body):
         step = modes.can_command(body.get("action"), body.get("iface", "can2"),
                                  body.get("bitrate"), body.get("nodes"))
@@ -325,11 +405,13 @@ class Commander:
         j = self.job
         if not j:
             return None
-        return {k: j[k] for k in ("mode", "title", "state", "message", "steps", "started",
+        view = {k: j[k] for k in ("mode", "title", "state", "message", "steps", "started",
                                   "options", "plan", "links")}
+        view["gamepad"] = bool(j.get("gamepad"))
+        return view
 
     def start_mode(self, mode_id, options):
-        plan = modes.build(mode_id, options, self.cfg)
+        plan = modes.build(mode_id, options, self.cfg, ground=self.ground_enabled)
         with self.job_lock:
             if self.job and self.job["state"] in ("starting", "running", "degraded", "stopping"):
                 raise ClientError(f"{self.job['title']} is {self.job['state']}: stop it first")
@@ -348,7 +430,7 @@ class Commander:
             self.job = {"mode": mode_id, "title": mode["title"], "state": "starting",
                         "message": "", "steps": steps, "started": time.time(),
                         "options": plan["options"], "plan": plan, "links": plan["links"],
-                        "cancel": False, "procs": []}
+                        "cancel": False, "procs": [], "gamepad": plan.get("gamepad", False)}
         threading.Thread(target=self._run_job, args=(self.job,), daemon=True).start()
         return self.job_view()
 
@@ -464,7 +546,8 @@ class Commander:
             self.job = {"mode": mode_id, "title": mode["title"], "state": "running",
                         "message": "picked up after a dashboard restart", "steps": [],
                         "started": time.time(), "options": {}, "plan": None, "links": [],
-                        "cancel": False, "procs": [(s, i) for s, i, _ in found]}
+                        "cancel": False, "procs": [(s, i) for s, i, _ in found],
+                        "gamepad": any(i == "mode-joy-relay" for _, i, _ in found)}
         self.note(f"{mode['title']} is already running: picked it up")
 
     def _check_job(self):
@@ -502,6 +585,7 @@ class Commander:
         if not job:
             return None
         job["cancel"] = True
+        self.joy.close()
         if job["state"] in ("starting", "running", "degraded"):
             job["state"] = "stopping"
             self.note(f"stopping {job['title']}")
@@ -513,6 +597,7 @@ class Commander:
         rover = self.cache.get("rover") or {}
         ground = self.cache.get("ground") or {}
         return {
+            "ground_enabled": self.ground_enabled,
             "rover": {"link": self.rover_link.state, "message": self.rover_link.message,
                       "ssh": self.rover_link.ssh_command_text(), **rover},
             "ground": ground,
@@ -522,7 +607,7 @@ class Commander:
         }
 
     def catalog(self):
-        cat = modes.catalog()
+        cat = modes.catalog(ground=self.ground_enabled)
         cfg = self.cfg
         cat["links"] = {
             "rcm_gds": {"label": "RCM GDS", "url": cfg["links"]["rcm_gds"]},
@@ -542,8 +627,12 @@ class Commander:
     def bring_up(self):
         """Start both dev containers as soon as they're reachable (startup.start_containers)."""
         def run():
-            ok, msg = self.ensure_container("ground")
-            self.note(f"ground container: {'ready' if ok else 'NOT ready - ' + msg}")
+            if self.ground_enabled:
+                ok, msg = self.ensure_container("ground")
+                self.note(f"ground container: {'ready' if ok else 'NOT ready - ' + msg}")
+            else:
+                self.note("no ground-station container on this machine (ground.mode none): "
+                          "everything runs on the rover, the gamepad comes from this browser")
             for _ in range(240):
                 if self.rover_link.client:
                     break
@@ -611,7 +700,10 @@ def make_handler(cmd):
                 body = json.loads(self.rfile.read(n) or b"{}") if n else {}
                 path = urlparse(self.path).path
                 if path == "/api/mode/preview":
-                    return self._send(200, modes.build(body["mode"], body.get("options"), cmd.cfg))
+                    return self._send(200, modes.build(body["mode"], body.get("options"), cmd.cfg,
+                                                       ground=cmd.ground_enabled))
+                if path == "/api/joy":
+                    return self._send(200, cmd.gamepad(body))
                 if path == "/api/mode/start":
                     return self._send(200, cmd.start_mode(body["mode"], body.get("options")))
                 if path == "/api/mode/stop":
@@ -622,6 +714,8 @@ def make_handler(cmd):
                     side, action = body.get("side"), body.get("action")
                     if side not in ("rover", "ground"):
                         raise ValueError("side must be rover or ground")
+                    if side == "ground" and not cmd.ground_enabled:
+                        raise ValueError("this machine has no ground-station container")
                     spec = cmd.container_spec(side)
                     if action == "start":
                         return self._send(200, cmd.client(side).container_start(spec))
@@ -673,7 +767,8 @@ def serve(cfg, open_browser=True, autostart=True):
     print(f"  Dashboard     {url}")
     print(f"  Rover         {cfg['rover'].get('user') or '?'}@{cfg['rover'].get('host')}"
           f"  (repo {cfg['rover'].get('repo')})")
-    print(f"  Ground repo   {cfg['ground']['repo']}")
+    print(f"  Ground repo   {cfg['ground']['repo']}"
+          + ("" if cfg["ground"]["enabled"] else "  (no ground container: rover only)"))
     print("  Ctrl-C stops the dashboard and what it started on this machine;"
           " the rover keeps running.\n", flush=True)
     cmd.note(f"dashboard up at {url}")
@@ -682,7 +777,7 @@ def serve(cfg, open_browser=True, autostart=True):
     if autostart and startup.get("start_containers", True):
         cmd.bring_up()
     if open_browser:
-        webbrowser.open_new_tab(url)
+        open_url(url)
         if startup.get("open_rcm_gds", True):
             cmd.open_link("rcm_gds")
     try:

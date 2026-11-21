@@ -109,7 +109,7 @@ h3 { font-size: 13px; margin: 0 0 12px; color: var(--muted); font-weight: 600; l
   font: 600 10px var(--mono); letter-spacing: .06em; padding: 2px 6px; border-radius: 4px;
   border: 1px solid var(--line-2); color: var(--muted); text-transform: uppercase;
 }
-.badge.run { color: var(--ok); border-color: rgba(63, 209, 139, .5); }
+.badge.live { color: var(--ok); border-color: rgba(63, 209, 139, .5); }
 .badge.todo { color: var(--warn); border-color: rgba(240, 180, 41, .4); }
 
 /* ---------- mode panel ---------- */
@@ -133,6 +133,17 @@ h3 { font-size: 13px; margin: 0 0 12px; color: var(--muted); font-weight: 600; l
   border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
 }
 .step.done { color: var(--text); }
+.pad {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 14px 0 0; padding: 9px 12px;
+  border: 1px solid var(--line-2); border-radius: 8px; background: var(--panel-2); font-size: 13px;
+}
+.pad[hidden] { display: none; }
+.pad .muted { color: var(--muted); }
+.pad .sticks { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.pad .bar { position: relative; width: 8px; height: 26px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.pad .bar i { position: absolute; left: 0; right: 0; background: var(--accent); }
+.pad .lb { font: 600 10.5px var(--mono); padding: 2px 6px; border-radius: 4px; border: 1px solid var(--line-2); color: var(--dim); }
+.pad .lb.on { color: #05140c; background: var(--ok); border-color: var(--ok); }
 .job-msg { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
 .job-msg.bad { color: var(--bad); }
 

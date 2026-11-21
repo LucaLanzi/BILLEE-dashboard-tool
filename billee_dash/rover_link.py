@@ -142,6 +142,7 @@ class RoverLink:
         self.lock = threading.Lock()
         self.wake = threading.Event()
         self.version = None
+        self.joy_port = None  # local port that reaches the rover's gamepad relay
         self._thread = None
         os.makedirs(state_dir, exist_ok=True)
 
@@ -196,6 +197,7 @@ class RoverLink:
     def _drop(self, why):
         with self.lock:
             self.client = None
+            self.joy_port = None
             if self.tunnel and self.tunnel.poll() is None:
                 self.tunnel.terminate()
             self.tunnel = None
@@ -231,6 +233,7 @@ class RoverLink:
             if self.local_agent is None:
                 self.local_agent = agent_mod.Agent("rover")
             self.client = LocalClient(self.local_agent)
+            self.joy_port = int(self.cfg.get("joy_relay_port", 8771))
             self.version = agent_mod.VERSION
             self._set("up", "local agent (no SSH)")
             return
@@ -258,17 +261,23 @@ class RoverLink:
             raise ConnectionError("agent did not start: " + _ssh_error(res))
         if "error" in info:
             raise ConnectionError(info["error"])
-        # 3. tunnel a local port to it
-        lport = free_port()
+        # 3. tunnel a local port to it, and one to the gamepad relay (listening only while a
+        #    mode with "Gamepad on: This browser" runs; ssh connects it on demand)
+        lport, jport = free_port(), free_port()
+        relay = int(self.cfg.get("joy_relay_port", 8771))
+        log = self._tunnel_log()
         tunnel = subprocess.Popen(
             self.ssh_base(master=False) + ["-N", "-o", "ExitOnForwardFailure=yes",
-                                           "-L", f"127.0.0.1:{lport}:127.0.0.1:{port}", self.target],
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                                           "-L", f"127.0.0.1:{lport}:127.0.0.1:{port}",
+                                           "-L", f"127.0.0.1:{jport}:127.0.0.1:{relay}",
+                                           self.target],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=log)
+        log.close()  # the ssh process keeps its own copy
         client = RemoteClient(lport, info["token"])
         for _ in range(60):
             if tunnel.poll() is not None:
-                err = tunnel.stderr.read().decode(errors="replace").strip()
-                raise ConnectionError("SSH tunnel failed: " + (err or f"exit {tunnel.returncode}"))
+                raise ConnectionError("SSH tunnel failed: " + (self._tunnel_log_tail() or
+                                                                f"exit {tunnel.returncode}"))
             try:
                 health = client.health()
                 break
@@ -279,8 +288,25 @@ class RoverLink:
             raise ConnectionError("rover agent did not answer through the tunnel")
         with self.lock:
             self.tunnel, self.client = tunnel, client
+            self.joy_port = jport
             self.version = health.get("version")
         self._set("up", f"{self.target} (agent {self.version})")
+
+    # ssh writes a line per refused forward (e.g. the gamepad relay not running yet). A file,
+    # not a pipe nobody reads, so it can never fill up and stall the tunnel.
+    def _tunnel_log(self):
+        path = os.path.join(self.state_dir, "ssh-tunnel.log")
+        if os.path.exists(path) and os.path.getsize(path) > 1_000_000:
+            os.replace(path, path + ".1")
+        return open(path, "ab")
+
+    def _tunnel_log_tail(self):
+        try:
+            with open(os.path.join(self.state_dir, "ssh-tunnel.log"), "rb") as f:
+                lines = f.read()[-2000:].decode(errors="replace").strip().splitlines()
+            return lines[-1] if lines else ""
+        except OSError:
+            return ""
 
     def close(self):
         self._drop("dashboard closing")

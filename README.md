@@ -17,6 +17,37 @@ make start
 
 `make start` opens `http://localhost:7780` and the RCM GDS (`http://10.110.0.230:5000`).
 
+## On a Mac
+
+A Mac can be the ground station for **controlling** the rover (not for running sims). Run
+`make setup-dash` and `make start` on the Mac itself, not in a container: a Docker container on
+macOS can't see a USB or Bluetooth gamepad, and ROS traffic doesn't cross Docker Desktop's VM.
+On macOS the dashboard switches itself to `ground.mode: none`:
+- nothing runs on the Mac but the dashboard (Python 3 and `ssh` ship with macOS, so no Docker);
+- every mode runs on the rover only, and the gamepad is read by the browser (below);
+- Foxglove: install the desktop app; the dashboard opens it on the rover's bridge;
+- Sim · Ground station only isn't available.
+
+## Gamepad from the browser
+
+**Gamepad on: This browser** (the default on a Mac; also on Linux) reads the controller with the
+browser's Gamepad API (Xbox or PS5, USB or Bluetooth) and drives the rover with it:
+
+```
+page (20 Hz, Linux joy_node layout) → dashboard → SSH tunnel → joy_relay → /joy
+    → joy_tank_drive → /diff_drive_controller/cmd_vel_unstamped
+```
+
+- The rover runs [`billee_dash/joy_relay.py`](billee_dash/joy_relay.py) (written into its
+  container when the mode starts) and the same `joy_tank_drive` node, with the same
+  `teleop/config/joystick.yaml`. Hold **LB** to drive, as with a gamepad on the ground station.
+- The mode card shows the pad, the two sticks and LB live. Press any button once after plugging
+  it in: browsers only show a gamepad after that.
+- **It stops on its own.** Sending stops when the tab is hidden or the pad disconnects. The relay
+  publishes a zero `/joy` (deadman released) 0.3 s after input stops, and
+  `diff_drive_controller` stops the wheels 0.25 s after its last command whatever happens (a
+  dropped link, a crashed browser). After a stall, only the newest gamepad state is used.
+
 ## How it works
 
 ```
@@ -59,7 +90,7 @@ The modes follow the rover state machine. Each has defaults; change any of them 
 
 | Mode | Rover (l4t) | Ground station (x86) | Opens |
 |---|---|---|---|
-| **Teleop · Drive** | `can-up` → `can-clear-faults` → `rover.launch.py mode:=real camera:=both` | `ground_station.launch.py use_sim_time:=false view:=both` | Foxglove |
+| **Teleop · Drive** | `can-up` → `can-clear-faults` → `rover.launch.py mode:=real camera:=both` (+ gamepad relay, with **This browser**) | `ground_station.launch.py use_sim_time:=false view:=both` | Foxglove |
 | **Teleop · Arm** | Drive, + `arm_bringup arm.launch.py` (option) | Drive, + `arm_teleop.launch.py joy:=false` (option) | Foxglove |
 | **Teleop · Science** | Drive without the ZED 2i (`camera:=none`) | `view:=drivetrain` | Foxglove, Science GDS |
 | Autonomous | TODO | | |
@@ -70,7 +101,7 @@ The modes follow the rover state machine. Each has defaults; change any of them 
 Options cover every argument in `running.md`:
 - **drivetrain:** real ODESCs, or Gazebo on the Jetson (`xvfb-run -a vglrun -d egl`);
 - **ZED:** `camera:=none|cloud|openpose|both`;
-- **gamepad:** on the ground station or on the rover;
+- **gamepad:** on the ground station, in this browser, or on the rover;
 - **CAN:** `can_interface`, `fault_policy`, `gear_ratio`, `vio`, `odom_tf`, `arm_camera`;
 - **ground station:** the RViz `view`, `fixed_frame`, RViz and Foxglove-bridge toggles;
 - **extra:** free `name:=value` arguments for either side.
@@ -144,6 +175,8 @@ overrides any of them:
 | `rover.devcontainer` / `ground.devcontainer` | `.devcontainer/l4t/…`, `.devcontainer/devcontainer.json` | which container |
 | `*.container_name` | empty | use a fixed container name instead of the labels |
 | `rover.services` | the two GDS units | shown under Systems |
+| `rover.joy_relay_port` | `8771` | the gamepad relay on the rover (reached through the SSH tunnel) |
+| `ground.mode` | `auto` | `container` (x86 ground station), `none` (rover only, e.g. a Mac); `auto` = `none` on macOS |
 | `links.*` | `:5000`, `:5001`, `ws://…:8765` | GDS and Foxglove |
 | `foxglove.open_with` | `auto` | `desktop`, `web` or `auto` |
 | `startup.open_rcm_gds` / `startup.start_containers` | `true` | at `make start` |
@@ -163,11 +196,13 @@ Command-line options: `./billee-dash --help` (`--no-browser`, `--port`, `--no-au
 | Docker `permission denied` | `sudo usermod -aG docker $USER`, then log out and in (on that machine). |
 | Foxglove opens the web app instead of the desktop app | Install the desktop app, or set `foxglove.open_with` to `desktop`. The web app can't reach `ws://` addresses on the LAN in every browser. |
 | Leftover ROS processes after the dashboard was killed | **Systems → Stop all** on that container. |
+| Gamepad box says "No gamepad" | Press a button on it: browsers hide a pad until then. Use Chrome or Safari on the Mac. |
+| Gamepad box says "gamepad relay not reachable" | The relay is still starting, or it died: see Rover output, process **gamepad relay**. |
 
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests       # modes, agent, HTTP auth
+python3 -m unittest discover -s tests       # modes, agent, HTTP auth, gamepad relay (stub rclpy)
 ./billee-dash --rover-local --no-browser    # "rover" agent in-process, no SSH (testing)
 ```
 

@@ -79,7 +79,7 @@ function updateModeBadges() {
   for (const el of $$(".mode")) {
     const b = $(".mbadge", el);
     const on = job && job.mode === el.dataset.mode && JOB_ACTIVE.has(job.state);
-    b.className = on ? "mbadge badge run" : "mbadge";
+    b.className = on ? "mbadge badge live" : "mbadge";
     b.textContent = on ? job.state : "";
   }
 }
@@ -99,6 +99,7 @@ function control(key, mode) {
     values[mode.id] = { ...(values[mode.id] || {}), [key]: val };
     store.set("values", values);
     schedulePreview();
+    renderPad();
   };
   if (spec.type === "select" && spec.choices.length <= 4) {
     const seg = h("div", { class: "seg", role: "group", "aria-label": spec.label });
@@ -167,6 +168,7 @@ function renderPanel() {
       runBtn),
     mode.todo ? h("p", { class: "todo-note", text: "TODO: " + mode.todo }) : null,
     h("div", { class: "steps", id: "steps" }),
+    h("div", { class: "pad", id: "padBox", hidden: true }),
     h("p", { class: "job-msg", id: "jobMsg" }),
     basic.length ? h("div", { class: "opts" }, basic.map((k) => optRow(k, mode))) : null,
     adv.length ? h("details", { class: "more", open: store.get("advOpen", false) },
@@ -290,14 +292,16 @@ function renderHeader() {
   const rc = (r.containers || {}).rover || {};
   const gc = ((s.ground || {}).containers || {}).ground || {};
   const lk = s.links || {};
-  $("#pills").replaceChildren(
+  const ground = s.ground_enabled !== false;
+  $("#pills").replaceChildren(...[
     pill("Rover link", linkCls, r.message),
     pill("Rover container", r.link === "up" ? (CSTATE[rc.state] || "") : "", rc.error || rc.state),
-    pill("Ground container", CSTATE[gc.state] || "", gc.error || gc.state),
+    ground ? pill("Ground container", CSTATE[gc.state] || "", gc.error || gc.state) : null,
     pill("RCM GDS", lk.rcm_gds ? "ok" : "bad", CAT.links.rcm_gds.url),
     pill("Science GDS", lk.scm_gds ? "ok" : "", CAT.links.scm_gds.url),
     pill("Foxglove bridge", lk.foxglove_ws ? "ok" : "", CAT.links.foxglove.ws),
-  );
+    pill(PAD.name ? "Gamepad" : "No gamepad", PAD.name ? (PAD.sending ? "ok" : "") : "", PAD.name),
+  ].filter(Boolean));
   const job = s.job;
   const strip = $("#stateStrip");
   if (job && JOB_ACTIVE.has(job.state)) {
@@ -354,7 +358,9 @@ function renderSystems() {
       h("button", { class: "small ghost", title: r.ssh, onclick: () => act("/api/rover/reconnect", {}, "Reconnecting") }, "Reconnect")),
     sysRow("Rover container · l4t", up ? (CSTATE[rc.state] || "") : "", up ? (rc.error || rc.name || rc.state || "") : "waiting for the link", "",
       ...containerButtons("rover", rc, up)),
-    sysRow("Ground container · x86", CSTATE[gc.state] || "", gc.error || gc.name || gc.state || "", mem(gh), ...containerButtons("ground", gc, true)),
+    s.ground_enabled === false
+      ? sysRow("Ground station", "", "no container here: rover only, gamepad from this browser", "")
+      : sysRow("Ground container · x86", CSTATE[gc.state] || "", gc.error || gc.name || gc.state || "", mem(gh), ...containerButtons("ground", gc, true)),
   ];
   for (const name of CAT.services) {
     const st = (r.services || {})[name];
@@ -515,6 +521,84 @@ function renderProcs() {
     ...(recent.length ? [h("div", { class: "none", text: "Finished" }), ...recent.map(row)] : []));
 }
 
+// ------------------------------------------------------------------ browser gamepad
+// For "Gamepad on: This browser": the page reads the controller (USB or Bluetooth, no
+// container needed, so a Mac works) and sends it to the rover's gamepad relay at 20 Hz, in the
+// Linux joy_node layout teleop/config/joystick.yaml is written for:
+//   axes    LX LY LT RX RY RT dpadX dpadY   (stick up / left = +1, trigger released = +1)
+//   buttons A B X Y LB RB back start guide LS RS
+// It stops sending when the tab is hidden or the pad disconnects; the rover then zeroes /joy.
+const PAD = { sending: false, error: "", lastOk: 0, inflight: false, name: "" };
+const DEADZONE = 0.15;
+
+function dz(v) {
+  const a = Math.abs(v);
+  return a < DEADZONE ? 0 : Math.sign(v) * (a - DEADZONE) / (1 - DEADZONE);
+}
+function pad() {
+  const pads = [...(navigator.getGamepads ? navigator.getGamepads() : [])].filter(Boolean);
+  return pads.find((p) => p.mapping === "standard") || pads[0] || null;
+}
+function joyState(p) {
+  const ax = (i) => dz(p.axes[i] || 0);
+  const bt = (i) => (p.buttons[i] && p.buttons[i].pressed ? 1 : 0);
+  const trig = (i) => 1 - 2 * ((p.buttons[i] && p.buttons[i].value) || 0);
+  const axes = [-ax(0), -ax(1), trig(6), -ax(2), -ax(3), trig(7), bt(14) - bt(15), bt(12) - bt(13)];
+  const buttons = [bt(0), bt(1), bt(2), bt(3), bt(4), bt(5), bt(8), bt(9), bt(16), bt(10), bt(11)];
+  return { axes, buttons };
+}
+function padWanted() {
+  const j = STATE && STATE.job;
+  return !!(j && j.gamepad && ["running", "degraded"].includes(j.state));
+}
+async function padSend(state) {
+  if (PAD.inflight) return;
+  PAD.inflight = true;
+  try { await api("/api/joy", state); PAD.lastOk = Date.now(); PAD.error = ""; }
+  catch (e) { PAD.error = e.message; }
+  finally { PAD.inflight = false; }
+}
+const ZERO = { axes: [0, 0, 1, 0, 0, 1, 0, 0], buttons: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] };
+function padTick() {
+  const p = pad();
+  PAD.name = p ? p.id.replace(/\s*\(.*$/, "") : "";
+  const go = padWanted() && p && !document.hidden;
+  if (go) {
+    PAD.sending = true;
+    PAD.state = joyState(p);
+    padSend(PAD.state);
+  } else if (PAD.sending) {
+    PAD.sending = false; PAD.state = null;
+    padSend(ZERO);  // deadman released
+  }
+  renderPad();
+}
+function renderPad() {
+  const box = $("#padBox");
+  if (!box) return;
+  const want = padWanted();
+  const opts = (STATE && STATE.job && STATE.job.options) || {};
+  const mode = modeById(selected);
+  const shown = want || optValues(mode).gamepad === "browser" || opts.gamepad === "browser";
+  box.hidden = !shown;
+  if (!shown) return;
+  const st = PAD.state;
+  const lb = st && st.buttons[4];
+  const bar = (v) => h("span", { class: "bar" }, h("i", { style: `height:${Math.round(Math.abs(v) * 100)}%;${v < 0 ? "top:50%" : "bottom:50%"}` }));
+  const live = PAD.sending && Date.now() - PAD.lastOk < 500;
+  box.replaceChildren(
+    h("span", { class: "dot " + (!PAD.name ? "bad" : live ? "ok" : want ? "warn" : "") }),
+    h("b", { text: PAD.name || "No gamepad" }),
+    h("span", { class: "muted", text: !PAD.name ? "plug it in (or pair it) and press any button"
+      : !want ? "sends to the rover while the mode runs"
+      : PAD.error ? PAD.error : document.hidden ? "tab hidden: not sending" : live ? "sending" : "connecting…" }),
+    st ? h("span", { class: "sticks" }, bar(st.axes[1] / 2), bar(st.axes[4] / 2),
+      h("span", { class: "lb" + (lb ? " on" : ""), text: "LB" })) : null);
+}
+window.addEventListener("gamepadconnected", padTick);
+window.addEventListener("gamepaddisconnected", padTick);
+document.addEventListener("visibilitychange", padTick);
+
 // ------------------------------------------------------------------ polling
 let stateBusy = false;
 async function pollState() {
@@ -538,6 +622,7 @@ async function boot() {
   renderQuick(); renderModes(); renderPanel(); renderCan();
   await pollState();
   setInterval(pollState, 1500);
+  setInterval(padTick, 50);
   pullLogs();
   $$("#outTabs button").forEach((b) => (b.onclick = () => setTab(b.dataset.side)));
   setTab(tab);

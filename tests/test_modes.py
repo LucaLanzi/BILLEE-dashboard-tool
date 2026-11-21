@@ -82,6 +82,33 @@ class TestModes(unittest.TestCase):
         _, rover, _, _ = cmds("teleop-drive", rover_extra="rviz:=false  world:=a/b.sdf")
         self.assertTrue(rover[0].endswith("rviz:=false world:=a/b.sdf"))
 
+    def test_browser_gamepad(self):
+        plan = modes.build("teleop-drive", {"gamepad": "browser"})
+        self.assertTrue(plan["gamepad"])
+        rover = [s["cmd"] for s in plan["rover"]]
+        self.assertEqual(rover[1], "python3 -u /tmp/billee-dash/joy_relay.py 8771")
+        self.assertEqual(rover[2], "ros2 run teleop joy_tank_drive --ros-args --params-file "
+                                   "src/teleop/config/joystick.yaml "
+                                   "-r /cmd_vel:=/diff_drive_controller/cmd_vel_unstamped")
+        self.assertNotIn("joy_control", rover[0])
+        self.assertIn("joystick:=false", plan["ground"][0]["cmd"])
+
+    def test_no_ground_container(self):
+        plan = modes.build("teleop-science", {}, ground=False)  # e.g. a Mac
+        self.assertEqual(plan["ground"], [])
+        self.assertEqual(plan["options"]["gamepad"], "browser")
+        self.assertEqual([s["id"] for s in plan["rover"]],
+                         ["mode-rover", "mode-joy-relay", "mode-joy-teleop"])
+        self.assertEqual(plan["links"], ["foxglove", "scm_gds"])
+        plan = modes.build("teleop-drive", {"gamepad": "rover"}, ground=False)
+        self.assertIn("joy_control:=true", plan["rover"][0]["cmd"])
+        for bad in (("teleop-drive", {"gamepad": "ground"}), ("sim-ground", {})):
+            with self.assertRaises(modes.OptionError):
+                modes.build(*bad, ground=False)
+        cat = {m["id"]: m for m in modes.catalog(ground=False)["modes"]}
+        self.assertTrue(cat["sim-ground"]["disabled"])
+        self.assertEqual(cat["teleop-drive"]["values"]["gamepad"], "browser")
+
     def test_can_commands(self):
         c = lambda *a, **k: modes.can_command(*a, **k)["cmd"]  # noqa: E731
         self.assertEqual(c("up", "can2", "250000"), "tooling/can-up can2 250000")

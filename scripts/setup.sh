@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # setup.sh — get the ground station ready to run the BILLEE dashboard (`make setup-dash`).
 #
-# Runs on the x86 ground station HOST (not in a container). Idempotent: run it again any time.
+# Runs on the ground station HOST (not in a container): the x86 Linux ground station, or a Mac.
+# On a Mac nothing runs locally but the dashboard itself: no Docker, no ground container; the
+# gamepad is read by the browser and sent to the rover. Idempotent: run it again any time.
 #
-#   1. host tools: python3, ssh, curl, xdg-utils (apt, asks for sudo) + checks Docker access
+#   1. host tools: python3, ssh, curl, xdg-utils (Linux: apt, asks for sudo) + checks Docker
 #   2. config/local.json: the rover's address, SSH user and repo path (asks; Enter keeps the default)
 #   3. an SSH key, installed on the rover (asks for the rover password once)
 #   4. checks the rover: python3, docker, the repo, the CAN tools
@@ -45,13 +47,21 @@ if [[ $EUID -eq 0 ]]; then die "run this as your normal user (it asks for sudo w
 
 # ---------------------------------------------------------------------------- 1. host tools
 b "1/6 Ground station tools"
+os="$(uname -s)"
 arch="$(uname -m)"
-[[ "$arch" == x86_64 ]] && ok "x86_64 host" || warn "this is $arch, not the x86 ground station; continuing"
+if [[ "$os" == Darwin ]]; then
+  ok "macOS ($arch): dashboard only; the rover runs everything, the gamepad goes through the browser"
+  command -v python3 >/dev/null || die "python3 is missing: run  xcode-select --install  then make setup-dash again"
+elif [[ "$arch" == x86_64 ]]; then
+  ok "x86_64 Linux host"
+else
+  warn "this is $arch, not the x86 ground station; continuing"
+fi
 need=()
 command -v python3 >/dev/null || need+=(python3)
 command -v ssh >/dev/null || need+=(openssh-client)
 command -v curl >/dev/null || need+=(curl)
-command -v xdg-open >/dev/null || need+=(xdg-utils)
+[[ "$os" == Darwin ]] || command -v xdg-open >/dev/null || need+=(xdg-utils)
 if [[ ${#need[@]} -gt 0 ]]; then
   if [[ -n "${SKIP_APT:-}" ]]; then
     warn "missing ${need[*]} (SKIP_APT=1: not installing)"
@@ -67,7 +77,9 @@ import sys; sys.exit(sys.version_info < (3, 8))
 EOF
 ok "python3 $(python3 -c 'import platform; print(platform.python_version())') (standard library only, nothing to pip install)"
 ok "ssh $(ssh -V 2>&1 | cut -d, -f1)"
-if ! command -v docker >/dev/null; then
+if [[ "$os" == Darwin ]]; then
+  ok "no Docker needed on a Mac (ground.mode auto -> none)"
+elif ! command -v docker >/dev/null; then
   warn "docker is missing: install Docker + the NVIDIA toolkit first (billee-software-2027 README §1)"
 elif ! docker info >/dev/null 2>&1; then
   warn "docker needs sudo for $USER. Fix: sudo usermod -aG docker $USER, then log out and in"
@@ -115,7 +127,14 @@ if ssh_ok; then
   ok "key login to $target works"
 else
   echo "  copying your key to the rover: enter $user's password on the Jetson when asked"
-  ssh-copy-id -o StrictHostKeyChecking=accept-new "$target" || warn "ssh-copy-id failed"
+  if command -v ssh-copy-id >/dev/null; then
+    ssh-copy-id -o StrictHostKeyChecking=accept-new "$target" || warn "ssh-copy-id failed"
+  else  # older macOS: no ssh-copy-id
+    pub="$(ls "$HOME"/.ssh/id_ed25519.pub "$HOME"/.ssh/id_rsa.pub 2>/dev/null | head -1)"
+    ssh -o StrictHostKeyChecking=accept-new "$target" \
+      'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys' \
+      < "$pub" || warn "copying the key failed"
+  fi
   ssh_ok && ok "key login to $target works" || die "can't log in to $target with a key; is the rover on and reachable?"
 fi
 
@@ -164,7 +183,9 @@ fi  # SKIP_ROVER
 # ---------------------------------------------------------------------------- 6. devcontainer CLI
 b "6/6 devcontainer CLI (optional)"
 cli="$state/tools/node_modules/.bin/devcontainer"
-if command -v devcontainer >/dev/null || [[ -x "$cli" ]]; then
+if [[ "$os" == Darwin ]]; then
+  ok "not needed on a Mac"
+elif command -v devcontainer >/dev/null || [[ -x "$cli" ]]; then
   ok "devcontainer CLI present"
 elif command -v npm >/dev/null && [[ "$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)" -ge 18 ]]; then
   if yesno "Install the devcontainer CLI (npm, into $state/tools) to create containers that were never built?" n; then
