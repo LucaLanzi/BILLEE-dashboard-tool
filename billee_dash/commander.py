@@ -19,6 +19,7 @@ the browser asking this server first, so a random website can't drive the rover.
 """
 
 import collections
+import errno
 import json
 import mimetypes
 import os
@@ -30,6 +31,7 @@ import subprocess
 import threading
 import time
 import urllib.parse
+import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -793,12 +795,45 @@ def make_handler(cmd):
     return Handler
 
 
+def running_dashboard(port):
+    """True if a BILLEE dashboard already answers on this port."""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/catalog", timeout=2) as r:
+            return "modes" in json.load(r)
+    except (OSError, ValueError):
+        return False
+
+
+def bind_server(cmd, bind, port, tries=20):
+    """Listen on `port`, or the next free one if another program holds it."""
+    for p in range(port, port + tries):
+        try:
+            return ThreadingHTTPServer((bind, p), make_handler(cmd))
+        except OSError as e:
+            if e.errno not in (errno.EADDRINUSE, errno.EACCES):
+                raise
+    raise SystemExit(f"billee-dash: ports {port}-{port + tries - 1} are all in use; "
+                     "pick another with: make start ARGS=\"--port 7900\"")
+
+
 def serve(cfg, open_browser=True, autostart=True):
     dash = cfg["dashboard"]
+    bind, port = dash.get("bind", "127.0.0.1"), int(dash.get("port", 7780))
+    if running_dashboard(port):
+        # A second copy would fight the first over the rover; use the one that's running.
+        url = f"http://localhost:{port}"
+        print(f"billee-dash: the dashboard is already running at {url} (in another terminal); "
+              "opening it.\n  To restart it, press Ctrl-C in that terminal (or find it with: "
+              f"lsof -nP -iTCP:{port} -sTCP:LISTEN), then make start again.")
+        if open_browser:
+            open_url(url)
+        return None
     cmd = Commander(cfg)
-    server = ThreadingHTTPServer((dash.get("bind", "127.0.0.1"), int(dash.get("port", 7780))),
-                                 make_handler(cmd))
+    server = bind_server(cmd, bind, port)
     server.daemon_threads = True
+    if server.server_address[1] != port:
+        print(f"billee-dash: port {port} is used by another program; "
+              f"using {server.server_address[1]} instead.")
 
     def interrupt(*_):
         raise KeyboardInterrupt

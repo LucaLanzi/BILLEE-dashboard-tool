@@ -249,6 +249,7 @@ Options: `make start ARGS="--help"`, e.g. `make start ARGS="--no-browser --port 
 | Symptom | Fix |
 |---|---|
 | `make setup-dash`: "This is a dev container" | Run it in a terminal on the ground station itself, not in a dev container (a prompt like `ros_user@rover:/workspaces/…` is the rover's container). |
+| `make start`: "the dashboard is already running" | One is already open from another terminal: it opens that one. To restart it, Ctrl-C in that terminal (`lsof -nP -iTCP:7780 -sTCP:LISTEN` finds it). |
 | Rover link `down: Permission denied` | `make setup-dash` (copies your SSH key). |
 | Rover link `down: No route to host` | The rover is off or the radio link is down. It reconnects by itself. |
 | `can-up` or the hotspot: `a password is required` | Install the sudo rule: `make setup-dash`, step 5. |
