@@ -5,7 +5,7 @@ dashboard starts both dev containers and launches the rover and the ground stati
 brings CAN up, clears ODESC faults and opens the F´ GDS pages and Foxglove for you.
 
 It lives in [billee-software-2027](https://github.com/BILLEE-BroncoSTAR/billee-software-2027) as
-the `dashboard/` submodule. From that repo's root, on the ground station:
+the `BILLEE-dashboard-tool/` submodule. From that repo's root, on the ground station:
 
 ```bash
 make setup-dash
