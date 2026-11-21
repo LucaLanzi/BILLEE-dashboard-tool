@@ -117,6 +117,9 @@ Run order: rover link → rover container → ground container → CAN steps →
 - **Foxglove** opens on every mode, connected straight to the rover's bridge at
   `ws://10.110.0.230:8765`. With `foxglove.open_with: auto`, the desktop app is used if it is
   installed (a `foxglove://` link), otherwise app.foxglove.dev.
+  The layout for every mode is billee-software-2027's
+  `ros2_ws/src/chassis_bringup/foxglove/rover_dashboard.json`: import it once (**Layouts → Import
+  from file**) and Foxglove keeps it.
 - **Teleop · Science** also opens the **Science GDS** (`:5001`).
 
 ## CAN panel
