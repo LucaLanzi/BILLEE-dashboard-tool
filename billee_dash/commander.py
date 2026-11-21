@@ -688,7 +688,12 @@ def serve(cfg, open_browser=True, autostart=True):
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nstopping: Ctrl-C to everything the dashboard started on the ground station")
+        signal.signal(signal.SIGINT, signal.SIG_DFL)  # a second Ctrl-C quits at once
+        try:
+            print("\nstopping: Ctrl-C to everything the dashboard started on the ground station "
+                  "(Ctrl-C again to quit now)", flush=True)
+        except OSError:
+            pass
         cmd.ground_agent.stop_all()
         for _ in range(60):
             if not any(p["state"] in ("running", "stopping") for p in cmd.ground_agent.proc_list()):
