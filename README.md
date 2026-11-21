@@ -205,8 +205,8 @@ overrides any of them:
 | `startup.open_rcm_gds` / `startup.start_containers` | `true` | at `make start` |
 | `mode.ground_delay_s` | `5` | wait between the rover and ground launches |
 
-Command-line options: `./billee-dash --help` (`--no-browser`, `--port`, `--no-autostart`,
-`--config extra.json`).
+Options: `make start ARGS="--help"`, e.g. `make start ARGS="--no-browser --port 7781"`
+(`--no-browser`, `--port`, `--no-autostart`, `--config extra.json`).
 
 ## How it works
 
@@ -261,7 +261,7 @@ Command-line options: `./billee-dash --help` (`--no-browser`, `--port`, `--no-au
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests       # modes, agent, links, HTTP auth, gamepad relay
+python3 -m unittest discover -s tests       # = make test-dash in billee-software-2027
 ./billee-dash --rover-local --no-browser    # "rover" agent in-process, no SSH (testing)
 ```
 
