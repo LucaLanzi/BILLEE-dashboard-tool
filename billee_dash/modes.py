@@ -104,6 +104,24 @@ OPTIONS = {
         "label": "Extra ground args", "side": "ground", "type": "args", "default": "",
         "placeholder": "name:=value ...", "help": "Appended to the ground station launch.",
     },
+    # Astronaut
+    "astro_drive": {
+        "label": "Drive the rover too", "side": "rover", "type": "bool", "basic": True,
+        "default": True,
+        "help": "Also run Teleop · Drive (CAN, rover.launch.py, gamepad) with the stream.",
+    },
+    "hotspot": {
+        "label": "Hotspot", "side": "rover", "type": "select", "basic": True,
+        "choices": [["up", "Recreate (hotspot.sh up)"], ["start", "Start the saved one"]],
+        "default": "up",
+        "help": "astronaut-streamer/jetson/hotspot.sh on the Jetson. up recreates it from "
+                "config/astronaut.env (+ astronaut.local.env for the password).",
+    },
+    "astro_stop": {
+        "label": "Stop server + hotspot on Stop", "side": "rover", "type": "bool", "default": False,
+        "help": "Off: Stop leaves the astronaut server and hotspot running (they also start at "
+                "boot). On: Stop also stops astronaut-web, astronaut-mediamtx and the hotspot.",
+    },
     # Teleop-Arm
     "arm_hw": {
         "label": "Arm hardware (arm.launch.py)", "side": "rover", "type": "bool", "basic": True,
@@ -168,8 +186,10 @@ MODES = [
     },
     {
         "id": "astronaut", "group": "mission", "title": "Astronaut", "short": "Astro",
-        "summary": "Astronaut module (overlaps with billee-hardware-2027)", "options": [],
-        "links": ["foxglove"], "todo": "Not defined yet.", "disabled": True,
+        "summary": "Jetson hotspot + astronaut server; the Pi joins and streams by itself",
+        "options": ["astro_drive", "hotspot", "astro_stop"] + DRIVE_OPTIONS,
+        "defaults": {"camera": "none"},
+        "links": ["astronaut", "foxglove"],
     },
     {
         "id": "sim-ground", "group": "test", "title": "Sim · Ground station only", "short": "Sim",
@@ -264,13 +284,64 @@ def joy_steps(port=JOY_RELAY_PORT):
         {"id": "mode-joy-relay", "label": "gamepad relay", "where": "container", "ros": True,
          "prep": 'mkdir -p /tmp/billee-dash && printf "%s" "$BILLEE_JOY_RELAY" > '
                  '/tmp/billee-dash/joy_relay.py',
-         "embed": "joy_relay.py",
+         "embed": "joy_relay.py", "embed_env": "BILLEE_JOY_RELAY",
          "cmd": f"python3 -u /tmp/billee-dash/joy_relay.py {int(port)}"},
         {"id": "mode-joy-teleop", "label": "joy_tank_drive", "where": "container", "ros": True,
          "cmd": "ros2 run teleop joy_tank_drive --ros-args --params-file "
                 "src/teleop/config/joystick.yaml "
                 "-r /cmd_vel:=/diff_drive_controller/cmd_vel_unstamped"},
     ]
+
+
+def _drive(plan, o, real, iface, cfg):
+    """rover.launch.py + ground_station.launch.py (+ the browser-gamepad relay)."""
+    args = [f"mode:={o['drivetrain']}"]
+    if o["camera"] != "none":
+        args.append(f"camera:={o['camera']}")
+    if real:
+        if iface != LAUNCH_DEFAULTS["can_interface"]:
+            args.append(f"can_interface:={iface}")
+        if o["fault_policy"] != LAUNCH_DEFAULTS["fault_policy"]:
+            args.append(f"fault_policy:={o['fault_policy']}")
+        if float(o["gear_ratio"]) != LAUNCH_DEFAULTS["gear_ratio"]:
+            args.append(f"gear_ratio:={_fmt_num(o['gear_ratio'])}")
+        if o["vio"]:
+            args.append("vio:=true")
+        if not o["odom_tf"] and not o["vio"]:
+            args.append("odom_tf:=false")
+    if o["arm_camera"] != LAUNCH_DEFAULTS["arm_camera"]:
+        args.append(f"arm_camera:={o['arm_camera']}")
+    if o["gamepad"] == "rover":
+        args.append("joy_control:=true")
+    if o["rover_extra"]:
+        args.append(o["rover_extra"])
+    prefix = "" if real else "xvfb-run -a vglrun -d egl "
+    plan["rover"].append({
+        "id": "mode-rover", "label": "rover.launch.py", "where": "container", "ros": True,
+        "cmd": f"{prefix}ros2 launch chassis_bringup rover.launch.py {' '.join(args)}"})
+    if o["gamepad"] == "browser":
+        port = (cfg or {}).get("rover", {}).get("joy_relay_port", JOY_RELAY_PORT)
+        plan["rover"] += joy_steps(port)
+        plan["gamepad"] = True
+
+    view = o["view"] if o["view"] != "auto" else (
+        o["camera"] if o["camera"] != "none" else "drivetrain")
+    gargs = [f"use_sim_time:={_b(not real)}", f"view:={view}"]
+    if o["fixed_frame"] != "odom":
+        gargs.append(f"fixed_frame:={o['fixed_frame']}")
+    if not o["rviz"]:
+        gargs.append("rviz:=false")
+    if not o["ground_foxglove"]:
+        gargs.append("foxglove:=false")
+    if o["gamepad"] != "ground":
+        gargs.append("joystick:=false")
+    if o["ground_extra"]:
+        gargs.append(o["ground_extra"])
+    plan["ground"].append({
+        "id": "mode-ground", "label": "ground_station.launch.py", "where": "container",
+        "ros": True,
+        "cmd": f"ros2 launch chassis_bringup ground_station.launch.py {' '.join(gargs)}"})
+
 
 
 def build(mode_id, values, cfg=None, ground=True):
@@ -290,78 +361,44 @@ def build(mode_id, values, cfg=None, ground=True):
     o = validate(mode, ground_defaults(mode, values) if not ground else values)
     if not ground and o.get("gamepad") == "ground":
         raise OptionError(f"Gamepad on: Ground station {NO_GROUND_MSG}. Pick This browser.")
-    plan = {"mode": mode_id, "options": o, "pre": [], "rover": [], "ground": [],
+    plan = {"mode": mode_id, "options": o, "pre": [], "rover": [], "ground": [], "post": [],
             "links": list(mode.get("links", []))}
 
     real = o.get("drivetrain", "real") == "real"
     iface = o.get("can_interface", "can2")
-    if mode_id in ("teleop-drive", "teleop-arm", "teleop-science", "bench") and real:
+    drive = mode_id in ("teleop-drive", "teleop-arm", "teleop-science") or \
+        (mode_id == "astronaut" and o["astro_drive"])
+    if (drive or mode_id == "bench") and real:
         if o.get("can_up"):
             plan["pre"].append(can_up_step(iface))
         if o.get("clear_faults"):
             plan["pre"].append(clear_faults_step(iface))
-
-    if mode_id in ("teleop-drive", "teleop-arm", "teleop-science"):
-        args = [f"mode:={o['drivetrain']}"]
-        if o["camera"] != "none":
-            args.append(f"camera:={o['camera']}")
-        if real:
-            if iface != LAUNCH_DEFAULTS["can_interface"]:
-                args.append(f"can_interface:={iface}")
-            if o["fault_policy"] != LAUNCH_DEFAULTS["fault_policy"]:
-                args.append(f"fault_policy:={o['fault_policy']}")
-            if float(o["gear_ratio"]) != LAUNCH_DEFAULTS["gear_ratio"]:
-                args.append(f"gear_ratio:={_fmt_num(o['gear_ratio'])}")
-            if o["vio"]:
-                args.append("vio:=true")
-            if not o["odom_tf"] and not o["vio"]:
-                args.append("odom_tf:=false")
-        if o["arm_camera"] != LAUNCH_DEFAULTS["arm_camera"]:
-            args.append(f"arm_camera:={o['arm_camera']}")
-        if o["gamepad"] == "rover":
-            args.append("joy_control:=true")
-        if o["rover_extra"]:
-            args.append(o["rover_extra"])
-        prefix = "" if real else "xvfb-run -a vglrun -d egl "
+    if mode_id == "astronaut":
+        plan["pre"] += astronaut_steps(o["hotspot"])
+        port = (cfg or {}).get("astronaut", {}).get("web_port", 8080)
         plan["rover"].append({
-            "id": "mode-rover", "label": "rover.launch.py", "where": "container", "ros": True,
-            "cmd": f"{prefix}ros2 launch chassis_bringup rover.launch.py {' '.join(args)}"})
-        if o["gamepad"] == "browser":
-            port = (cfg or {}).get("rover", {}).get("joy_relay_port", JOY_RELAY_PORT)
-            plan["rover"] += joy_steps(port)
-            plan["gamepad"] = True
+            "id": "mode-astro-watch", "label": "astronaut stream", "where": "host",
+            "cwd": "hardware_repo", "embed": "astro_watch.py", "embed_env": "BILLEE_ASTRO_WATCH",
+            "show": f"(dashboard) astro_watch.py {int(port)}: reports the Pi and the feed",
+            "cmd": f'exec python3 -u -c "$BILLEE_ASTRO_WATCH" {int(port)}'})
+        if o["astro_stop"]:
+            plan["post"] = astronaut_stop_steps()
+        if not o["astro_drive"]:
+            plan["links"] = ["astronaut"]
 
-        view = o["view"] if o["view"] != "auto" else (
-            o["camera"] if o["camera"] != "none" else "drivetrain")
-        gargs = [f"use_sim_time:={_b(not real)}", f"view:={view}"]
-        if o["fixed_frame"] != "odom":
-            gargs.append(f"fixed_frame:={o['fixed_frame']}")
-        if not o["rviz"]:
-            gargs.append("rviz:=false")
-        if not o["ground_foxglove"]:
-            gargs.append("foxglove:=false")
-        if o["gamepad"] != "ground":
-            gargs.append("joystick:=false")
-        if o["ground_extra"]:
-            gargs.append(o["ground_extra"])
-        plan["ground"].append({
-            "id": "mode-ground", "label": "ground_station.launch.py", "where": "container",
-            "ros": True,
-            "cmd": f"ros2 launch chassis_bringup ground_station.launch.py {' '.join(gargs)}"})
+    if drive:
+        _drive(plan, o, real, iface, cfg)
+    if mode_id == "teleop-arm":
+        if o["arm_hw"]:
+            plan["rover"].append({
+                "id": "mode-arm", "label": "arm.launch.py", "where": "container", "ros": True,
+                "cmd": "ros2 launch arm_bringup arm.launch.py"})
+        if o["arm_jog"]:
+            plan["ground"].append({
+                "id": "mode-arm-jog", "label": "arm_teleop.launch.py", "where": "container",
+                "ros": True, "cmd": "ros2 launch arm_bringup arm_teleop.launch.py joy:=false"})
 
-        if mode_id == "teleop-arm":
-            if o["arm_hw"]:
-                plan["rover"].append({
-                    "id": "mode-arm", "label": "arm.launch.py", "where": "container", "ros": True,
-                    "cmd": "ros2 launch arm_bringup arm.launch.py"})
-            if o["arm_jog"]:
-                plan["ground"].append({
-                    "id": "mode-arm-jog", "label": "arm_teleop.launch.py", "where": "container",
-                    "ros": True, "cmd": "ros2 launch arm_bringup arm_teleop.launch.py joy:=false"})
-    if not ground:
-        plan["ground"] = []
-
-    elif mode_id == "sim-ground":
+    if mode_id == "sim-ground":
         args = ["foxglove:=true", f"gui:={_b(o['gui'])}", f"navigation:={_b(o['navigation'])}",
                 f"rviz:={_b(o['rviz'])}"]
         if o["odesc_shadow"]:
@@ -388,14 +425,51 @@ def build(mode_id, values, cfg=None, ground=True):
             "id": "mode-rover", "label": "onboard_test.launch.py", "where": "container",
             "ros": True,
             "cmd": f"ros2 launch chassis_bringup onboard_test.launch.py {' '.join(args)}".strip()})
+    if not ground:
+        plan["ground"] = []
     return plan
+
+
+# --------------------------------------------------------------------------- astronaut
+# billee-hardware-2027's astronaut-streamer on the Jetson host (cwd: rover.hardware_repo). Its
+# hotspot script and two systemd services are installed once with `make astronaut jetson`; the
+# Pi then joins the hotspot and streams by itself. sudo runs without a password through the rule
+# `make setup-dash` installs, which names the hotspot script by its absolute path ($(pwd -P)).
+HOTSPOT_SH = '"$(pwd -P)/astronaut-streamer/jetson/hotspot.sh"'
+ASTRO_UNITS = "astronaut-mediamtx astronaut-web"
+_NO_ASTRO = ('{ echo "astronaut-streamer is not set up in $(pwd -P): in ~/billee-hardware-2027 run '
+             'make rover, then make astronaut jetson"; exit 1; }')
+
+
+def astronaut_steps(hotspot="up"):
+    return [
+        {"id": "astro-hotspot", "label": f"hotspot {hotspot}", "where": "host",
+         "cwd": "hardware_repo", "fatal": True,
+         "show": f"sudo bash astronaut-streamer/jetson/hotspot.sh {hotspot}",
+         "cmd": f"[ -f astronaut-streamer/jetson/hotspot.sh ] || {_NO_ASTRO}; "
+                f"sudo -n bash {HOTSPOT_SH} {hotspot} && bash {HOTSPOT_SH} status"},
+        {"id": "astro-server", "label": "astronaut server", "where": "host",
+         "cwd": "hardware_repo", "fatal": True,
+         "show": f"sudo systemctl restart {ASTRO_UNITS}",
+         "cmd": f"[ -f /etc/systemd/system/astronaut-web.service ] || {_NO_ASTRO}; "
+                f"sudo -n systemctl restart {ASTRO_UNITS} && systemctl is-active {ASTRO_UNITS}"},
+    ]
+
+
+def astronaut_stop_steps():
+    return [{"id": "astro-stop", "label": "stop astronaut server + hotspot", "where": "host",
+             "cwd": "hardware_repo",
+             "show": "sudo systemctl stop astronaut-web astronaut-mediamtx; "
+                     "sudo bash astronaut-streamer/jetson/hotspot.sh stop",
+             "cmd": f"sudo -n systemctl stop astronaut-web astronaut-mediamtx; "
+                    f"sudo -n bash {HOTSPOT_SH} stop"}]
 
 
 # --------------------------------------------------------------------------- CAN tools
 def can_up_step(iface, bitrate=None):
     cmd = f"tooling/can-up {iface}" + (f" {int(bitrate)}" if bitrate else "")
     return {"id": "can-up", "label": f"can-up {iface}", "where": "host", "cmd": cmd,
-            "ros": False}
+            "ros": False, "fatal": True}
 
 
 def clear_faults_step(iface, nodes=None, action="clear"):

@@ -80,6 +80,12 @@ def load_config(path=None):
         ground["repo"] = parent if os.path.isdir(os.path.join(parent, "ros2_ws")) else \
             os.path.expanduser("~/billee-software-2027")
     ground["repo"] = os.path.realpath(os.path.expanduser(ground["repo"]))
+    # Links are templates on the rover's address: whatever Jetson IP `make setup-dash` saved
+    # (rover.host) is what the GDS, Foxglove and astronaut links open.
+    host = cfg["rover"].get("host") or "10.110.0.230"
+    if host in ("local", "localhost-agent"):
+        host = "localhost"
+    cfg["links"] = {k: str(v).replace("{rover}", host) for k, v in cfg["links"].items()}
     # mode: container (the x86 dev container runs the ground side) | none (nothing runs here:
     # a Mac, or any machine without the container) | auto (none on macOS, else container)
     gmode = ground.get("mode", "auto")
@@ -196,6 +202,12 @@ class JoyLink:
             except OSError:
                 pass
         self.sock = None
+
+
+def needs_container(plan, side):
+    """True if something in the plan runs in that side's dev container (not just its host)."""
+    steps = plan[side] + (plan["pre"] if side == "rover" else [])
+    return any(s["where"] == "container" for s in steps)
 
 
 # --------------------------------------------------------------------------- commander
@@ -344,28 +356,30 @@ class Commander:
             if step.get("prep"):
                 cmd = f"{step['prep']} && {cmd}"
             env = {"ROS_DOMAIN_ID": str(self.cfg.get("ros_domain_id", 42))}
-            if step.get("embed"):  # a dashboard file the command writes out in the container
-                with open(os.path.join(PKG_DIR, step["embed"])) as f:
-                    env["BILLEE_JOY_RELAY"] = f.read()
             if side == "ground" and os.environ.get("DISPLAY"):
                 env["DISPLAY"] = os.environ["DISPLAY"]
-            spec["env"] = env
         else:
             spec["target"] = "host"
-            spec["cwd"] = c["repo"]
+            # cwd: the repo (billee-software-2027), or another path key of this side's config
+            spec["cwd"] = c.get(step.get("cwd", "repo")) or c["repo"]
+            env = {}
+        if step.get("embed"):  # a dashboard file the command reads from an environment variable
+            with open(os.path.join(PKG_DIR, step["embed"])) as f:
+                env[step["embed_env"]] = f.read()
+        spec["env"] = env
         spec["cmd"] = cmd
         return spec
 
     def run_step(self, side, step, tag=None):
         return self.client(side).start(self.proc_spec(side, step, tag))
 
-    def wait_proc(self, side, proc_id, timeout):
+    def wait_proc(self, side, proc_id, timeout, cancellable=True):
         end = time.monotonic() + timeout
         while time.monotonic() < end:
             for p in self.client(side).procs():
                 if p["id"] == proc_id and p["state"] not in ("starting", "running", "stopping"):
                     return p
-            if self.job and self.job.get("cancel"):
+            if cancellable and self.job and self.job.get("cancel"):
                 return None
             time.sleep(0.5)
         return None
@@ -418,9 +432,10 @@ class Commander:
             mode = modes.MODE_BY_ID[mode_id]
             steps = []
             if plan["rover"] or plan["pre"]:
-                steps += [{"name": "Rover link", "state": "pending"},
-                          {"name": "Rover container", "state": "pending"}]
-            if plan["ground"]:
+                steps.append({"name": "Rover link", "state": "pending"})
+            if needs_container(plan, "rover"):
+                steps.append({"name": "Rover container", "state": "pending"})
+            if needs_container(plan, "ground"):
                 steps.append({"name": "Ground container", "state": "pending"})
             steps += [{"name": s["label"], "state": "pending"} for s in plan["pre"]]
             steps += [{"name": s["label"], "state": "pending"} for s in plan["rover"]]
@@ -465,12 +480,13 @@ class Commander:
                 if not self.rover_link.client:
                     return self._fail(job, "Rover link", self.rover_link.message or "not connected")
                 self._step(job, "Rover link", "done")
+            if needs_container(plan, "rover"):
                 self._step(job, "Rover container", "active")
                 ok, msg = self.ensure_container("rover")
                 if not ok:
                     return self._fail(job, "Rover container", msg)
                 self._step(job, "Rover container", "done")
-            if plan["ground"]:
+            if needs_container(plan, "ground"):
                 self._step(job, "Ground container", "active")
                 ok, msg = self.ensure_container("ground")
                 if not ok:
@@ -485,7 +501,7 @@ class Commander:
                 if done is None:
                     return self._fail(job, step["label"], "did not finish")
                 if done["rc"] != 0:
-                    if step["id"] == "can-up":
+                    if step.get("fatal"):
                         return self._fail(job, step["label"],
                                           f"exit {done['rc']} (see Rover output; sudo rights? "
                                           "`make setup-dash`)")
@@ -566,7 +582,7 @@ class Commander:
             (alive if p["state"] in ("starting", "running", "stopping") else dead).append(
                 f"{side}:{p['label']}")
         if job["state"] == "stopping":
-            if not alive:
+            if not alive and not job.get("post_pending"):
                 job["state"], job["message"] = "stopped", ""
                 self.note(f"{job['title']} stopped")
         elif dead:
@@ -590,7 +606,33 @@ class Commander:
             job["state"] = "stopping"
             self.note(f"stopping {job['title']}")
             self._stop_job_procs(job)
+            post = (job.get("plan") or {}).get("post") or []
+            if post:
+                job["post_pending"] = True
+                threading.Thread(target=self._run_post, args=(job, post), daemon=True).start()
         return self.job_view()
+
+    def _run_post(self, job, steps):
+        """Steps a mode runs after its processes have stopped (Astronaut: stop the server)."""
+        try:
+            end = time.monotonic() + 30
+            while time.monotonic() < end:
+                live = [pid for side, pid in job["procs"]
+                        if any(p["id"] == pid and p["state"] in ("starting", "running", "stopping")
+                               for p in self.client(side).procs())]
+                if not live:
+                    break
+                time.sleep(0.5)
+            for step in steps:
+                p = self.run_step("rover", step, tag="post")
+                done = self.wait_proc("rover", p["id"], 60, cancellable=False)
+                if done is None or done["rc"] != 0:
+                    why = "did not finish" if done is None else f"exit {done['rc']}"
+                    self.note(f"{step['label']}: {why} (see Rover output)", stream="err")
+        except (ClientError, ConnectionError) as e:
+            self.note(f"after-stop steps failed: {e}", stream="err")
+        finally:
+            job["post_pending"] = False
 
     # ---- state for the page
     def state(self):
@@ -614,6 +656,7 @@ class Commander:
             "scm_gds": {"label": "Science GDS", "url": cfg["links"]["scm_gds"]},
             "foxglove": {"label": "Foxglove", "url": self.foxglove_url(),
                          "ws": cfg["links"]["foxglove_ws"]},
+            "astronaut": {"label": "Astronaut", "url": cfg["links"]["astronaut"]},
         }
         cat["hosts"] = {"rover": cfg["rover"].get("host"), "ground": cfg["ground"].get("host"),
                         "rover_user": cfg["rover"].get("user")}

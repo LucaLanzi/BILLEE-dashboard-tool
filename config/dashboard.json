@@ -10,6 +10,7 @@
     "ssh_port": 22,
     "ssh_key": "",
     "repo": "~/billee-software-2027",
+    "hardware_repo": "~/billee-hardware-2027",
     "devcontainer": ".devcontainer/l4t/devcontainer.json",
     "container_name": "",
     "pixi_env": "l4t",
@@ -28,9 +29,13 @@
     "pixi_run": "pixi run -e {env}"
   },
   "links": {
-    "rcm_gds": "http://10.110.0.230:5000",
-    "scm_gds": "http://10.110.0.230:5001",
-    "foxglove_ws": "ws://10.110.0.230:8765"
+    "rcm_gds": "http://{rover}:5000",
+    "scm_gds": "http://{rover}:5001",
+    "foxglove_ws": "ws://{rover}:8765",
+    "astronaut": "https://{rover}:8443"
+  },
+  "astronaut": {
+    "web_port": 8080
   },
   "foxglove": {
     "open_with": "auto"

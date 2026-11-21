@@ -97,5 +97,18 @@ class TestAgent(unittest.TestCase):
         srv.shutdown()
 
 
+class TestLinks(unittest.TestCase):
+    def test_links_follow_the_rover_ip(self):
+        from billee_dash import commander
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump({"rover": {"host": "192.168.4.97"}}, f)
+        links = commander.load_config(f.name)["links"]
+        os.unlink(f.name)
+        self.assertEqual(links, {"rcm_gds": "http://192.168.4.97:5000",
+                                 "scm_gds": "http://192.168.4.97:5001",
+                                 "foxglove_ws": "ws://192.168.4.97:8765",
+                                 "astronaut": "https://192.168.4.97:8443"})
+
+
 if __name__ == "__main__":
     unittest.main()

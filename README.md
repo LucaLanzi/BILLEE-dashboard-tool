@@ -1,11 +1,21 @@
 # BILLEE Dashboard
 
-One web page to run the BILLEE rover from the ground station: pick a mode, press **Run**, and the
-dashboard starts both dev containers and launches the rover and the ground station. It also
-brings CAN up, clears ODESC faults and opens the F´ GDS pages and Foxglove for you.
+The easy way to operate the BILLEE rover: one web page on the ground station that replaces the
+SSH sessions, dev-container terminals and `ros2 launch` commands. Pick a mode, press **Run**, and
+the dashboard does the rest:
+- starts the rover's and the ground station's dev containers;
+- brings CAN up and clears ODESC faults;
+- launches the rover and the ground station;
+- opens the F´ GDS pages and Foxglove.
+
+Everything both machines print is one click away.
 
 It lives in [billee-software-2027](https://github.com/BILLEE-BroncoSTAR/billee-software-2027) as
-the `BILLEE-dashboard-tool/` submodule. From that repo's root, on the ground station:
+the `BILLEE-dashboard-tool/` submodule.
+
+## Quick start
+
+On the ground station, from billee-software-2027's root:
 
 ```bash
 make setup-dash
@@ -15,93 +25,48 @@ make setup-dash
 make start
 ```
 
-`make start` opens `http://localhost:7780` and the RCM GDS (`http://10.110.0.230:5000`).
+`make setup-dash` asks for the **Jetson's IP address**, the SSH user and the repo paths on the
+rover, then sets up SSH and checks the rover (details in [Setup](#setup-make-setup-dash)).
 
-## On a Mac
+`make start` opens the dashboard at `http://localhost:7780` and the RCM GDS. Ctrl-C in that
+terminal stops the dashboard and what it started on the ground station; the rover keeps running.
 
-A Mac can be the ground station for **controlling** the rover (not for running sims). Run
-`make setup-dash` and `make start` on the Mac itself, not in a container: a Docker container on
-macOS can't see a USB or Bluetooth gamepad, and ROS traffic doesn't cross Docker Desktop's VM.
-On macOS the dashboard switches itself to `ground.mode: none`:
-- nothing runs on the Mac but the dashboard (Python 3 and `ssh` ship with macOS, so no Docker);
-- every mode runs on the rover only, and the gamepad is read by the browser (below);
-- Foxglove: install the desktop app; the dashboard opens it on the rover's bridge;
-- Sim · Ground station only isn't available.
+## Using it
 
-## Gamepad from the browser
-
-**Gamepad on: This browser** (the default on a Mac; also on Linux) reads the controller with the
-browser's Gamepad API (Xbox or PS5, USB or Bluetooth) and drives the rover with it:
-
-```
-page (20 Hz, Linux joy_node layout) → dashboard → SSH tunnel → joy_relay → /joy
-    → joy_tank_drive → /diff_drive_controller/cmd_vel_unstamped
-```
-
-- The rover runs [`billee_dash/joy_relay.py`](billee_dash/joy_relay.py) (written into its
-  container when the mode starts) and the same `joy_tank_drive` node, with the same
-  `teleop/config/joystick.yaml`. Hold **LB** to drive, as with a gamepad on the ground station.
-- The mode card shows the pad, the two sticks and LB live. Press any button once after plugging
-  it in: browsers only show a gamepad after that.
-- **It stops on its own.** Sending stops when the tab is hidden or the pad disconnects. The relay
-  publishes a zero `/joy` (deadman released) 0.3 s after input stops, and
-  `diff_drive_controller` stops the wheels 0.25 s after its last command whatever happens (a
-  dropped link, a crashed browser). After a stall, only the newest gamepad state is used.
-
-## How it works
-
-```
- Ground station (x86, 10.110.0.231)                     Rover (Jetson, 10.110.0.230)
- ┌──────────────────────────────────────┐   SSH         ┌──────────────────────────────────┐
- │ browser ── commander (billee-dash)   │══ tunnel ════▶│ agent.py (listener, host)        │
- │              │ in-process agent      │               │   ├─ host: can-up, clear-faults, │
- │              ├─ docker exec ────────▶│ x86 container │   │        systemctl (GDS units)  │
- │              │   pixi -e default     │               │   └─ docker exec ─▶ l4t container│
- │              └─ opens GDS, Foxglove  │               │        pixi -e l4t  ros2 launch  │
- └──────────────────────────────────────┘               └──────────────────────────────────┘
-```
-
-- **One devtool, two roles.** The commander (this repo, on the ground station) serves the page
-  and decides what to run. The listener, [`billee_dash/agent.py`](billee_dash/agent.py), runs the
-  commands. The ground station runs it inside the commander. On the rover the commander uploads
-  it over SSH on connect and starts it, so there is nothing to install or keep in sync there.
-- **The same steps you'd type.** A ROS launch runs as
-  `docker exec <devcontainer> bash -c "cd ros2_ws && pixi run -e l4t ros2 launch …"`, which is
-  the same as SSH-ing in, opening the dev container, running `pixi shell -e l4t` and launching.
-  The commands come from `docs/running.md`.
-- **Dev containers.** The dashboard finds them by the labels VS Code puts on them, starts them
-  with `docker start` and runs their `postStartCommand`, as **Reopen in Container** does. A
-  container that was never built needs one VS Code build first (or the devcontainer CLI, see
-  setup).
-- **Radio-link safe.** The rover's agent keeps running when the link drops. Its processes keep
-  running and their output is buffered there, then fetched on reconnect. Ctrl-C on the dashboard
-  stops what it started on the **ground station** only. When the dashboard restarts, it picks up
-  the mode still running on the rover.
-- **Stop is Ctrl-C.** Each process runs in its own process group inside the container. Stop sends
-  SIGINT to the whole group (so `ros2 launch` shuts its nodes down cleanly), then SIGTERM after
-  10 s and SIGKILL after 15 s.
-- **Standard library only.** Python 3.8+, `ssh` and `docker`; no pip packages and no web CDNs, so
-  it works offline in the field.
+- **Modes** (left): pick one, check its settings, press **Run**. **Stop** shuts it down with
+  Ctrl-C. Pressing **Run** on another mode while one is running offers to switch.
+- **Settings** (middle): the common ones on the card, everything else under **Advanced**.
+  **Commands** shows exactly what will run, and where.
+- **Links** (top right): RCM GDS, Science GDS, Foxglove and the Astronaut page. The status pills
+  next to them show what is reachable.
+- **Systems** (right):
+  - the rover link and the free RAM on each machine;
+  - each dev container, with **Start** and **Stop all**;
+  - the GDS services, with **Restart**.
+- **CAN** (right): every `can-up` and `can-clear-faults` command, per node ([below](#can-panel)).
+- **Output** (bottom bar): the verbose terminal output of the **Rover**, the **Ground** station,
+  the **Dashboard** itself (what it did and why), or **All** of it. Pick a process on the left to
+  see only its output, or stop it. ROS log colours are kept.
 
 ## Modes
 
-The modes follow the rover state machine. Each has defaults; change any of them on the mode's card
-(the basic ones) or under **Advanced**. **Commands** shows exactly what will run.
+The modes follow the rover state machine. Each starts from sensible defaults that you can change
+before **Run**. The commands are the ones in billee-software-2027's `docs/running.md`.
 
-| Mode | Rover (l4t) | Ground station (x86) | Opens |
+| Mode | Rover | Ground station | Opens |
 |---|---|---|---|
-| **Teleop · Drive** | `can-up` → `can-clear-faults` → `rover.launch.py mode:=real camera:=both` (+ gamepad relay, with **This browser**) | `ground_station.launch.py use_sim_time:=false view:=both` | Foxglove |
+| **Teleop · Drive** | `can-up` → `can-clear-faults` → `rover.launch.py mode:=real camera:=both` | `ground_station.launch.py use_sim_time:=false view:=both` | Foxglove |
 | **Teleop · Arm** | Drive, + `arm_bringup arm.launch.py` (option) | Drive, + `arm_teleop.launch.py joy:=false` (option) | Foxglove |
 | **Teleop · Science** | Drive without the ZED 2i (`camera:=none`) | `view:=drivetrain` | Foxglove, Science GDS |
 | Autonomous | TODO | | |
-| Astronaut | TODO | | |
+| **Astronaut** | hotspot up → astronaut server → stream watcher, + Drive (option) | Drive's (option) | Astronaut page, Foxglove |
 | Sim · Ground station only | nothing | `sim_gz.launch.py foxglove:=true` | Foxglove (local) |
 | Bench test · Jetson only | `can-up` → `can-clear-faults` → `onboard_test.launch.py` | nothing | |
 
-Options cover every argument in `running.md`:
+The settings cover every argument in `running.md`:
 - **drivetrain:** real ODESCs, or Gazebo on the Jetson (`xvfb-run -a vglrun -d egl`);
 - **ZED:** `camera:=none|cloud|openpose|both`;
-- **gamepad:** on the ground station, in this browser, or on the rover;
+- **gamepad:** where it's read ([below](#gamepad));
 - **CAN:** `can_interface`, `fault_policy`, `gear_ratio`, `vio`, `odom_tf`, `arm_camera`;
 - **ground station:** the RViz `view`, `fixed_frame`, RViz and Foxglove-bridge toggles;
 - **extra:** free `name:=value` arguments for either side.
@@ -109,18 +74,69 @@ Options cover every argument in `running.md`:
 Values are checked before they reach a command line, so nothing typed in the page can inject
 shell syntax.
 
-Run order: rover link → rover container → ground container → CAN steps → rover launch → (5 s)
-→ ground launch → links. Pressing **Run** on another mode while one is running offers to switch.
+**Run order:**
+1. the rover link, then the dev containers the mode needs;
+2. the CAN or astronaut steps (a failed `can-up` or hotspot stops the run);
+3. the rover launch, then 5 s later the ground launch;
+4. the links.
 
-**Links.**
-- The **RCM GDS** opens once when the dashboard starts.
-- **Foxglove** opens on every mode, connected straight to the rover's bridge at
-  `ws://10.110.0.230:8765`. With `foxglove.open_with: auto`, the desktop app is used if it is
-  installed (a `foxglove://` link), otherwise app.foxglove.dev.
-  The layout for every mode is billee-software-2027's
-  `ros2_ws/src/chassis_bringup/foxglove/rover_dashboard.json`: import it once (**Layouts → Import
-  from file**) and Foxglove keeps it.
-- **Teleop · Science** also opens the **Science GDS** (`:5001`).
+### Astronaut
+
+Runs billee-hardware-2027's astronaut-streamer on the Jetson host, in `~/billee-hardware-2027`
+(`rover.hardware_repo`):
+1. **Hotspot:** `sudo bash astronaut-streamer/jetson/hotspot.sh up` (or `start`, the saved one).
+2. **Server:** `sudo systemctl restart astronaut-mediamtx astronaut-web`.
+3. **The Pi** joins the hotspot and starts streaming by itself. A watcher in the Rover output
+   reports when it does: the Pi's address, signal and temperature, and the feed going LIVE.
+4. Opens the astronaut page (`https://<jetson>:8443`, with talk-back).
+
+**Drive the rover too** (on by default) runs Teleop · Drive alongside it. **Stop** leaves the
+server and hotspot running (they also start at boot) unless **Stop server + hotspot on Stop** is
+on.
+
+The streamer must be installed on the Jetson once, with its hotspot password: see
+astronaut-streamer's `docs/RUN_GUIDE.md` (`make astronaut jetson`).
+
+## Links
+
+Every page the dashboard opens uses the **Jetson IP address entered in `make setup-dash`**.
+Enter `192.168.4.97` and the dashboard opens:
+
+| Link | Address | Opened |
+|---|---|---|
+| RCM GDS | `http://192.168.4.97:5000` | once, at `make start` |
+| Science GDS | `http://192.168.4.97:5001` | with Teleop · Science |
+| Foxglove | `ws://192.168.4.97:8765` (the rover's bridge) | with every mode |
+| Astronaut | `https://192.168.4.97:8443` | with Astronaut |
+
+Run `make setup-dash` again to change the address; every link follows.
+
+Foxglove uses the desktop app if it's installed (a `foxglove://` link), otherwise
+app.foxglove.dev (`foxglove.open_with`). The layout for every mode is billee-software-2027's
+`ros2_ws/src/chassis_bringup/foxglove/rover_dashboard.json`: import it once
+(**Layouts → Import from file**) and Foxglove keeps it.
+
+## Gamepad
+
+**Gamepad on** picks where the controller is read. Hold **LB** to drive in every case
+(`teleop/config/joystick.yaml`):
+
+| Setting | Reads it | Use when |
+|---|---|---|
+| **Ground station** | `joy_node` in the ground station's x86 container | the normal setup |
+| **This browser** | the dashboard page (Gamepad API: Xbox or PS5, USB or Bluetooth) | the computer running the dashboard has no ground-station container, or `joy_node` can't see the pad |
+| **Rover (bench)** | `joy_node` on the Jetson | bench testing with the pad plugged into the Jetson |
+
+**This browser** streams the pad's state at 20 Hz through the dashboard's SSH tunnel to
+[`joy_relay.py`](billee_dash/joy_relay.py) on the rover. The relay publishes `/joy` for the usual
+`joy_tank_drive`. The mode card shows the pad, both sticks and LB live. Press any button once
+after plugging it in: browsers only show a gamepad after that.
+
+It stops on its own:
+- the page stops sending when its tab is hidden or the pad disconnects;
+- the relay publishes a zero `/joy` (deadman released) 0.3 s after input stops;
+- `diff_drive_controller` stops the wheels 0.25 s after its last command, whatever happens (a
+  dropped link, a crashed browser).
 
 ## CAN panel
 
@@ -135,36 +151,39 @@ Every command of `tooling/can-up` and `tooling/can-clear-faults`, run on the Jet
 | Reboot | `… --force-reboot` (reboots the selected boards, or all; asks first) |
 
 Pick nodes with the chips (named from `ros2_ws/src/odesc/config/node_map.yaml`); none selected
-means every wheel node. `can-up` needs sudo on the rover without a password: `make setup-dash`
-offers a narrow sudo rule for that.
-
-## Output
-
-**Output** (bottom bar) shows the verbose terminal output of both machines:
-- **Rover** (l4t container and host), **Ground** (x86 container) or **Dashboard** (what it did and
-  why), or **All** interleaved;
-- filter to one process from the list on the left, and stop any process from there.
-
-ROS log colours are kept.
-
-**Systems** shows:
-- the rover link, the free RAM on each machine and each dev container's state, with buttons to
-  start it or Ctrl-C everything the dashboard started in it;
-- the two GDS services (`billee-rcm-lan-gds`, `billee-scm-lan-gds`), with a restart button.
+means every wheel node.
 
 ## Setup (`make setup-dash`)
 
-[`scripts/setup.sh`](scripts/setup.sh), run on the ground station host:
-1. installs `python3`, `ssh`, `curl`, `xdg-utils` if missing, and checks Docker access;
-2. asks for the rover's address, SSH user and repo path, and writes `config/local.json`;
+[`scripts/setup.sh`](scripts/setup.sh), run on the ground station host (not in a container). It
+is safe to run again at any time:
+1. installs `python3`, `ssh`, `curl` and `xdg-utils` if missing, and checks Docker access;
+2. asks for the Jetson's IP address, the SSH user, and the billee-software-2027 and
+   billee-hardware-2027 paths on the rover, and saves them in `config/local.json`;
 3. makes an SSH key if you have none and copies it to the rover (you type the password once);
-4. checks the rover: python3, docker, the repo, `can-up`, the l4t container, the GDS services;
-5. offers `/etc/sudoers.d/billee-dash` on the rover. It is checked with `visudo -c` and only allows
-   `ip`, `modprobe vcan` and start/stop/restart of the two GDS units, without a password;
-6. optionally installs the devcontainer CLI, which is only needed to *create* a container that
-   was never built.
+4. checks the rover:
+   - python3, docker, the repo and `can-up`;
+   - the l4t container and the GDS services;
+   - the astronaut-streamer and its services;
+5. offers `/etc/sudoers.d/billee-dash` on the rover, checked with `visudo -c`. Without a password
+   it only allows:
+   - `ip` and `modprobe vcan` (for `can-up`);
+   - the astronaut `hotspot.sh up|start|stop`;
+   - start, stop and restart of the GDS and astronaut units.
 
-Non-interactive: `YES=1 ROVER_USER=billee make setup-dash`.
+   The hotspot script lives in your home directory, so this lets your user run that script as
+   root. That is fine on the team's Jetson, but it's worth knowing;
+6. optionally installs the devcontainer CLI. It's only needed to *create* a container that was
+   never built.
+
+Non-interactive: `YES=1 ROVER_HOST=192.168.4.97 ROVER_USER=billee make setup-dash`.
+
+**Which computer.** The ground station is the x86 Linux machine with the ground-station dev
+container, and the dashboard runs the ground side (RViz, the gamepad, a local Foxglove bridge)
+there. Any other computer with Python 3 and `ssh` can run the dashboard without a ground-station
+container: every mode then runs on the rover only, and the gamepad is read by the browser.
+- **macOS:** the dashboard switches to this by itself, with no Docker needed.
+- **Any other machine:** set `ground.mode` to `none`.
 
 ## Configuration
 
@@ -173,14 +192,15 @@ overrides any of them:
 
 | Key | Default | |
 |---|---|---|
-| `rover.host` / `rover.user` | `10.110.0.230` / (setup) | SSH target |
-| `rover.repo` | `~/billee-software-2027` | on the rover host |
+| `rover.host` / `rover.user` | `10.110.0.230` / (setup) | the Jetson; every link uses this address |
+| `rover.repo` / `rover.hardware_repo` | `~/billee-software-2027` / `~/billee-hardware-2027` | on the Jetson host |
 | `rover.devcontainer` / `ground.devcontainer` | `.devcontainer/l4t/…`, `.devcontainer/devcontainer.json` | which container |
 | `*.container_name` | empty | use a fixed container name instead of the labels |
 | `rover.services` | the two GDS units | shown under Systems |
 | `rover.joy_relay_port` | `8771` | the gamepad relay on the rover (reached through the SSH tunnel) |
-| `ground.mode` | `auto` | `container` (x86 ground station), `none` (rover only, e.g. a Mac); `auto` = `none` on macOS |
-| `links.*` | `:5000`, `:5001`, `ws://…:8765` | GDS and Foxglove |
+| `ground.mode` | `auto` | `container` (runs the ground side here), `none` (rover only); `auto` = `none` on macOS |
+| `links.*` | `http://{rover}:5000`, `:5001`, `ws://{rover}:8765`, `https://{rover}:8443` | `{rover}` is `rover.host` |
+| `astronaut.web_port` | `8080` | the astronaut server's status API, on the Jetson |
 | `foxglove.open_with` | `auto` | `desktop`, `web` or `auto` |
 | `startup.open_rcm_gds` / `startup.start_containers` | `true` | at `make start` |
 | `mode.ground_delay_s` | `5` | wait between the rover and ground launches |
@@ -188,24 +208,60 @@ overrides any of them:
 Command-line options: `./billee-dash --help` (`--no-browser`, `--port`, `--no-autostart`,
 `--config extra.json`).
 
+## How it works
+
+```
+ Ground station                                         Rover (Jetson)
+ ┌──────────────────────────────────────┐   SSH         ┌──────────────────────────────────┐
+ │ browser ── commander (billee-dash)   │══ tunnel ════▶│ agent.py (listener, host)        │
+ │              │ in-process agent      │               │   ├─ host: can-up, clear-faults, │
+ │              ├─ docker exec ────────▶│ x86 container │   │   astronaut, GDS services    │
+ │              │   pixi -e default     │               │   └─ docker exec ─▶ l4t container│
+ │              └─ opens GDS, Foxglove  │               │        pixi -e l4t  ros2 launch  │
+ └──────────────────────────────────────┘               └──────────────────────────────────┘
+```
+
+- **One devtool, two roles.** The commander (this repo, on the ground station) serves the page
+  and decides what to run. The listener, [`billee_dash/agent.py`](billee_dash/agent.py), runs the
+  commands. On the ground station it runs inside the commander. On the rover the commander uploads
+  it over SSH on connect and starts it, so there is nothing to install or keep in sync there.
+- **The same steps you'd type.** A ROS launch runs as
+  `docker exec <devcontainer> bash -c "cd ros2_ws && pixi run -e l4t ros2 launch …"`, which is
+  what SSH-ing in, opening the dev container, `pixi shell -e l4t` and launching would do.
+- **Dev containers.** The dashboard finds them by the labels VS Code puts on them, starts them
+  with `docker start` and runs their `postStartCommand`, as **Reopen in Container** does.
+- **Radio-link safe.**
+  - The rover's agent and its processes keep running when the link drops. Their output is
+    buffered there and fetched on reconnect.
+  - Ctrl-C on the dashboard stops what it started on the ground station only.
+  - A restarted dashboard picks up the mode still running on the rover.
+- **Stop is Ctrl-C.** Each process runs in its own process group. Stop sends SIGINT to the whole
+  group (so `ros2 launch` shuts its nodes down cleanly), then SIGTERM after 10 s and SIGKILL after
+  15 s.
+- **Standard library only.** Python 3.8+, `ssh` and `docker`; no pip packages and no web CDNs, so
+  it works offline in the field.
+
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
 | Rover link `down: Permission denied` | `make setup-dash` (copies your SSH key). |
 | Rover link `down: No route to host` | The rover is off or the radio link is down. It reconnects by itself. |
-| `can-up`: `a password is required` | Install the sudo rule: `make setup-dash`, step 5. |
+| `can-up` or the hotspot: `a password is required` | Install the sudo rule: `make setup-dash`, step 5. |
+| Astronaut: `astronaut-streamer is not set up` | On the Jetson, in `~/billee-hardware-2027`: `make rover`, then `make astronaut jetson`. |
+| Astronaut: `HOTSPOT_PSK is empty` | Set the hotspot password in `astronaut-streamer/config/astronaut.local.env` on the Jetson. |
+| Astronaut page warns about the certificate | It's the Jetson's own; accept it once (needed for talk-back). |
 | Container `missing` | Build it once in VS Code (**Reopen in Container**), or install the devcontainer CLI in setup. |
 | Docker `permission denied` | `sudo usermod -aG docker $USER`, then log out and in (on that machine). |
 | Foxglove opens the web app instead of the desktop app | Install the desktop app, or set `foxglove.open_with` to `desktop`. The web app can't reach `ws://` addresses on the LAN in every browser. |
 | Leftover ROS processes after the dashboard was killed | **Systems → Stop all** on that container. |
-| Gamepad box says "No gamepad" | Press a button on it: browsers hide a pad until then. Use Chrome or Safari on the Mac. |
+| Gamepad box says "No gamepad" | Press a button on it: browsers hide a pad until then. |
 | Gamepad box says "gamepad relay not reachable" | The relay is still starting, or it died: see Rover output, process **gamepad relay**. |
 
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests       # modes, agent, HTTP auth, gamepad relay (stub rclpy)
+python3 -m unittest discover -s tests       # modes, agent, links, HTTP auth, gamepad relay
 ./billee-dash --rover-local --no-browser    # "rover" agent in-process, no SSH (testing)
 ```
 

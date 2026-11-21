@@ -205,9 +205,14 @@ async function preview() {
   try {
     const plan = await api("/api/mode/preview", { mode: mode.id, options: optValues(mode) });
     const rows = [];
-    for (const s of plan.pre) rows.push(["rover host", s.cmd]);
-    for (const s of plan.rover) rows.push(["rover · l4t container", s.cmd]);
-    for (const s of plan.ground) rows.push(["ground · x86 container", s.cmd]);
+    const where = (s, side) => s.where === "host"
+      ? (s.cwd === "hardware_repo" ? `${side} host · billee-hardware-2027` : `${side} host`)
+      : (side === "rover" ? "rover · l4t container" : "ground · x86 container");
+    const cmd = (s) => s.show || s.cmd;
+    for (const s of plan.pre) rows.push([where(s, "rover"), cmd(s)]);
+    for (const s of plan.rover) rows.push([where(s, "rover"), cmd(s)]);
+    for (const s of plan.ground) rows.push([where(s, "ground"), cmd(s)]);
+    for (const s of plan.post || []) rows.push(["on Stop · " + where(s, "rover"), cmd(s)]);
     if (plan.links.length) rows.push(["opens", plan.links.map(linkName).join(" · ")]);
     box.replaceChildren(...rows.map(([w, c]) => h("div", { class: "cmd" }, h("div", { class: "w", text: w }), h("code", { text: c }))));
     $("#runBtn").title = "";
@@ -219,7 +224,7 @@ async function preview() {
 }
 
 function linkName(k) {
-  return { foxglove: "Foxglove (rover bridge)", foxglove_local: "Foxglove (local)", scm_gds: "Science GDS", rcm_gds: "RCM GDS" }[k] || k;
+  return { foxglove: "Foxglove (rover bridge)", foxglove_local: "Foxglove (local)", scm_gds: "Science GDS", rcm_gds: "RCM GDS", astronaut: "Astronaut page" }[k] || k;
 }
 
 async function runOrStop(mode) {
@@ -318,6 +323,7 @@ function renderQuick() {
     h("a", { href: L.rcm_gds.url, target: "_blank", rel: "noopener" }, "RCM GDS"),
     h("a", { href: L.scm_gds.url, target: "_blank", rel: "noopener" }, "Science GDS"),
     h("a", { href: L.foxglove.url, target: "_blank", rel: "noopener", title: L.foxglove.ws }, "Foxglove"),
+    h("a", { href: L.astronaut.url, target: "_blank", rel: "noopener", title: "astronaut-streamer (talk-back)" }, "Astronaut"),
   );
 }
 

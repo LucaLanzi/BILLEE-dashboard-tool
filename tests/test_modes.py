@@ -67,7 +67,7 @@ class TestModes(unittest.TestCase):
         self.assertEqual(links, ["foxglove_local"])
 
     def test_todo_modes_refuse(self):
-        for m in ("autonomous", "astronaut"):
+        for m in ("autonomous",):
             with self.assertRaises(modes.OptionError):
                 modes.build(m, {})
 
@@ -108,6 +108,37 @@ class TestModes(unittest.TestCase):
         cat = {m["id"]: m for m in modes.catalog(ground=False)["modes"]}
         self.assertTrue(cat["sim-ground"]["disabled"])
         self.assertEqual(cat["teleop-drive"]["values"]["gamepad"], "browser")
+
+    def test_astronaut(self):
+        plan = modes.build("astronaut", {})
+        pre = [s["id"] for s in plan["pre"]]
+        self.assertEqual(pre, ["can-up", "can-clear-faults", "astro-hotspot", "astro-server"])
+        hotspot, server = plan["pre"][2], plan["pre"][3]
+        self.assertEqual(hotspot["cwd"], "hardware_repo")
+        self.assertTrue(hotspot["fatal"] and server["fatal"])
+        self.assertIn('sudo -n bash "$(pwd -P)/astronaut-streamer/jetson/hotspot.sh" up',
+                      hotspot["cmd"])
+        self.assertIn("sudo -n systemctl restart astronaut-mediamtx astronaut-web", server["cmd"])
+        rover = [s["id"] for s in plan["rover"]]
+        self.assertEqual(rover[:2], ["mode-astro-watch", "mode-rover"])  # + the drive
+        self.assertNotIn("camera:=", plan["rover"][1]["cmd"])
+        self.assertEqual(plan["links"], ["astronaut", "foxglove"])
+        self.assertEqual(plan["post"], [])
+
+    def test_astronaut_only_and_stop(self):
+        plan = modes.build("astronaut", {"astro_drive": False, "hotspot": "start",
+                                         "astro_stop": True})
+        self.assertEqual([s["id"] for s in plan["pre"]], ["astro-hotspot", "astro-server"])
+        self.assertIn("hotspot.sh\" start", plan["pre"][0]["cmd"])
+        self.assertEqual([s["id"] for s in plan["rover"]], ["mode-astro-watch"])
+        self.assertEqual(plan["ground"], [])
+        self.assertEqual(plan["links"], ["astronaut"])
+        self.assertEqual([s["id"] for s in plan["post"]], ["astro-stop"])
+
+    def test_bench_without_ground_container(self):
+        plan = modes.build("bench", {"can_up": False, "clear_faults": False}, ground=False)
+        self.assertEqual([s["cmd"] for s in plan["rover"]],
+                         ["ros2 launch chassis_bringup onboard_test.launch.py"])
 
     def test_can_commands(self):
         c = lambda *a, **k: modes.can_command(*a, **k)["cmd"]  # noqa: E731
