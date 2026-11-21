@@ -87,13 +87,50 @@ h3 { font-size: 13px; margin: 0 0 12px; color: var(--muted); font-weight: 600; l
 }
 .side { display: grid; gap: 18px; }
 
+/* ---------- state machine ---------- */
+/* Same width as .grid's content (max 1600 px less its 20 px padding each side). */
+.sm { margin: 18px max(20px, calc((100% - 1560px) / 2)) 0; padding: 10px 16px 12px; }
+.sm + .grid { padding-top: 14px; }
+.sm-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.sm-toggle { border: 0; background: none; padding: 4px 2px; font-weight: 600; color: var(--muted); font-size: 13px; }
+.sm-toggle .caret { display: inline-block; transition: transform .15s; }
+.sm:not(.closed) .sm-toggle .caret { transform: rotate(90deg); }
+.sm-now { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.sm-now b { font-weight: 600; }
+.sm-now .muted { color: var(--muted); }
+.sm-body { margin-top: 8px; }
+.sm.closed .sm-body { display: none; }
+.sm-svg { display: block; width: 100%; height: auto; max-height: 260px; font-family: var(--sans); }
+.sm-box { fill: var(--panel-2); stroke: var(--line-2); }
+.sm-title { fill: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .02em; }
+.sm-start { fill: var(--muted); }
+.sm-arrow { fill: var(--line-2); }
+.sm-edge path { fill: none; stroke: var(--line-2); stroke-width: 1.5; }
+.sm-edge.on path { stroke: var(--ok); stroke-width: 2.2; }
+.sm-edge.busy path { stroke: var(--blue); stroke-width: 2.2; stroke-dasharray: 5 4; animation: smdash 1s linear infinite; }
+.sm-edge.warn path { stroke: var(--warn); stroke-width: 2.2; }
+@keyframes smdash { to { stroke-dashoffset: -18; } }
+.sm-elabel { fill: var(--dim); font-size: 10.5px; }
+.sm-node rect { fill: var(--panel); stroke: var(--line-2); stroke-width: 1.2; }
+.sm-label { fill: var(--text); font-size: 12.5px; font-weight: 600; pointer-events: none; }
+.sm-sub { fill: var(--panel-2) !important; stroke: var(--line) !important; }
+.sm-sublabel { fill: var(--muted); font-size: 11px; pointer-events: none; }
+.sm-mode { cursor: pointer; }
+.sm-mode:hover > rect, .sm-mode:focus-visible > rect { stroke: var(--muted); }
+.sm-mode:focus { outline: none; }
+.sm-node.todo > rect { stroke-dasharray: 4 3; }
+.sm-node.todo .sm-label { fill: var(--dim); }
+.sm-node.on > rect { stroke: var(--ok); stroke-width: 2.2; fill: rgba(63, 209, 139, .12); }
+.sm-node.busy > rect { stroke: var(--blue); stroke-width: 2.2; fill: rgba(90, 169, 255, .12); animation: pulse 1s infinite alternate; }
+.sm-node.warn > rect { stroke: var(--warn); stroke-width: 2.2; fill: rgba(240, 180, 41, .12); }
+.sm-node.bad > rect { stroke: var(--bad); stroke-dasharray: 4 3; }
+.sm-node.dim .sm-label { fill: var(--dim); }
+.sm-test rect { fill: rgba(90, 169, 255, .1); stroke: var(--blue); }
+.sm-test.on rect { fill: rgba(63, 209, 139, .1); stroke: var(--ok); }
+.sm-test.warn rect { stroke: var(--warn); }
+.sm-test text { fill: var(--text); font-size: 11.5px; font-weight: 600; }
+
 /* ---------- modes ---------- */
-.state-strip {
-  display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: var(--r);
-  border: 1px solid var(--line); background: var(--panel); font-size: 13px;
-}
-.state-strip b { font-weight: 600; }
-.state-strip .muted { color: var(--muted); }
 .mode-list { display: grid; gap: 8px; }
 .mode {
   text-align: left; width: 100%; border: 1px solid var(--line); background: var(--panel);
@@ -287,6 +324,10 @@ dialog p { margin: 0 0 8px; white-space: pre-line; }
   .side { grid-column: 1 / -1; grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 760px) {
+  .sm { margin: 14px 16px 0; padding: 8px 10px 10px; }
+  /* keep the diagram readable: it scrolls sideways inside its card, not the page */
+  .sm-body { overflow-x: auto; }
+  .sm-svg { min-width: 760px; }
   .top { padding: 10px 16px; }
   .grid { grid-template-columns: minmax(0, 1fr); padding: 14px 16px 24px; }
   .side { grid-template-columns: minmax(0, 1fr); }

@@ -35,6 +35,12 @@ terminal stops the dashboard and what it started on the ground station; the rove
 
 ## Using it
 
+- **State machine** (top): the rover state machine, live.
+  - **Highlighting:** whichever mode runs lights up (blue while it starts, green running, amber if
+    a process died), and so does the edge from Idle into it. Idle is lit when nothing runs.
+  - **Devcontainers:** their boxes follow the real containers.
+  - **Using it:** hover a state for its note, click one to select that mode (it doesn't run it),
+    and collapse the strip from its header.
 - **Modes** (left): pick one, check its settings, press **Run**. **Stop** shuts it down with
   Ctrl-C. Pressing **Run** on another mode while one is running offers to switch.
 - **Settings** (middle): the common ones on the card, everything else under **Advanced**.

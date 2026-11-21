@@ -31,10 +31,20 @@
   <nav class="quick" id="quick"></nav>
 </header>
 
+<!-- Rover state machine: the running mode lights up -->
+<section class="card sm" id="stateMachine" aria-label="State machine">
+  <div class="sm-head">
+    <button class="sm-toggle" id="smToggle" aria-expanded="true" aria-controls="smSvg">
+      <span class="caret">▸</span> State machine
+    </button>
+    <div class="sm-now" id="smNow"></div>
+  </div>
+  <div class="sm-body" id="smSvg"></div>
+</section>
+
 <main class="grid">
   <!-- Modes -->
   <section class="col modes" aria-label="Modes">
-    <div class="state-strip" id="stateStrip"></div>
     <h2>Mission</h2>
     <div class="mode-list" id="modesMission"></div>
     <h2>Test</h2>

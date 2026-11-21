@@ -91,6 +91,155 @@ function select(id) {
   renderPanel();
 }
 
+// ------------------------------------------------------------------ state machine
+// The rover state machine (rover: devcontainer -> Idle -> one mission mode; ground station:
+// devcontainer -> running), drawn as an SVG and lit from /api/state: whichever mode runs is
+// highlighted, the devcontainer boxes follow the real containers. Click a mode to select it.
+const SVGNS = "http://www.w3.org/2000/svg";
+const svg = (tag, attrs = {}, ...kids) => {
+  const el = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue;
+    if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "text") el.textContent = v;
+    else el.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid) el.append(kid);
+  return el;
+};
+const SM_MODES = ["teleop-drive", "teleop-arm", "teleop-science", "autonomous", "astronaut"];
+const SM_LABEL = { "teleop-drive": "Teleop-Drive", "teleop-arm": "Teleop-Arm", "teleop-science": "Teleop-Science",
+  autonomous: "Autonomous-Mode", astronaut: "Astronaut-Mode" };
+
+function smNode(id, x, y, w, hgt, label, note, extra = {}) {
+  return svg("g", { class: "sm-node", id: "sm-" + id, ...extra },
+    svg("title", { text: note }),
+    svg("rect", { x, y, width: w, height: hgt, rx: 7 }),
+    svg("text", { x: x + w / 2, y: y + (extra.labelTop ? 17 : hgt / 2 + 4.5), "text-anchor": "middle", class: "sm-label", text: label }));
+}
+function smEdge(id, d, label, lx, ly) {
+  return svg("g", { class: "sm-edge", id: "sm-e-" + id },
+    svg("path", { d, "marker-end": "url(#smArrow)" }),
+    label ? svg("text", { x: lx, y: ly, "text-anchor": "middle", class: "sm-elabel", text: label }) : null);
+}
+
+function renderStateMachine() {
+  const ground = !!CAT.ground;
+  const W = 140, TOP = 128, GAP = 20, X0 = 34;
+  const IDLE = { x: 410, y: 32, w: 200, h: 34 };
+  const idleX = IDLE.x + IDLE.w / 2, idleY = IDLE.y + IDLE.h;
+  const kids = [
+    svg("defs", {}, svg("marker", { id: "smArrow", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" },
+      svg("path", { d: "M0,0 L10,5 L0,10 z", class: "sm-arrow" }))),
+    // rover box
+    svg("rect", { x: 10, y: 6, width: 820, height: 222, rx: 10, class: "sm-box" }),
+    svg("text", { x: 420, y: 22, "text-anchor": "middle", class: "sm-title", text: "Rover · Jetson (L4T devcontainer)" }),
+    svg("circle", { cx: 60, cy: 49, r: 6, class: "sm-start" }),
+    smEdge("rstart", "M66,49 L94,49"),
+    smNode("rdev", 96, 32, 200, 34, "Devcontainer Opens (L4T)", "The rover's l4t dev container (Systems → Rover container)"),
+    smEdge("rdev", `M296,49 L${IDLE.x - 2},49`, "devtool launches", 353, 42),
+    smNode("idle", IDLE.x, IDLE.y, IDLE.w, IDLE.h, "Idle (Devtool Launched)", "The dashboard is up and nothing is running: pick a mode, then Run"),
+    svg("g", { id: "sm-test", class: "sm-test", visibility: "hidden" },
+      svg("rect", { x: 622, y: 36, width: 196, height: 26, rx: 6 }),
+      svg("text", { x: 720, y: 53, "text-anchor": "middle", text: "" })),
+  ];
+  SM_MODES.forEach((id, i) => {
+    const m = modeById(id) || { title: SM_LABEL[id], summary: "" };
+    const x = X0 + i * (W + GAP);
+    const arm = id === "teleop-arm";
+    const y = arm ? TOP - 10 : TOP, hgt = arm ? 98 : 36;
+    const cx = x + W / 2;
+    const note = `${m.title}\n${m.summary}${m.todo ? "\nTODO: " + m.todo : ""}\n(click to select)`;
+    kids.push(smEdge(id, `M${idleX},${idleY} C${idleX},${idleY + 34} ${cx},${y - 34} ${cx},${y - 2}`));
+    const node = smNode(id, x, y, W, hgt, SM_LABEL[id], note, {
+      "data-mode": id, class: "sm-node sm-mode" + (m.disabled ? " todo" : ""), labelTop: arm,
+      role: "button", tabindex: 0, onclick: () => select(id),
+      onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(id); } },
+    });
+    if (arm) {  // the Xbox drive/arm toggle inside Teleop-Arm
+      node.append(
+        svg("rect", { x: x + 12, y: y + 28, width: W - 24, height: 22, rx: 5, class: "sm-sub" }),
+        svg("text", { x: cx, y: y + 43, "text-anchor": "middle", class: "sm-sublabel", text: "Xbox controls Drive" }),
+        svg("text", { x: cx, y: y + 63, "text-anchor": "middle", class: "sm-elabel", text: "⇅ toggle mode" }),
+        svg("rect", { x: x + 12, y: y + 69, width: W - 24, height: 22, rx: 5, class: "sm-sub" }),
+        svg("text", { x: cx, y: y + 84, "text-anchor": "middle", class: "sm-sublabel", text: "Xbox controls Arm" }));
+    }
+    kids.push(node);
+  });
+  // ground station box
+  const rcm = CAT.links.rcm_gds.url;
+  kids.push(
+    svg("rect", { x: 846, y: 6, width: 244, height: 222, rx: 10, class: "sm-box" }),
+    svg("text", { x: 968, y: 22, "text-anchor": "middle", class: "sm-title", text: ground ? "Ground station (x86 devcontainer)" : "Ground station (this computer)" }),
+    svg("circle", { cx: 968, cy: 44, r: 6, class: "sm-start" }),
+    smEdge("gstart", "M968,50 L968,68"),
+    smNode("gdev", 878, 70, 180, 34, ground ? "Devcontainer Opens (x86)" : "No container here",
+      ground ? "The ground station's x86 dev container (Systems → Ground container)" : "No ground-station container on this computer: every mode runs on the rover"),
+    smEdge("gdev", "M968,104 L968,150", "devtool launches", 1022, 131),
+    smNode("grun", 878, 152, 180, 34, ground ? "Running" : "Dashboard running",
+      `Always brings up the F´ RCM GDS at ${rcm}`),
+  );
+  $("#smSvg").replaceChildren(svg("svg", { viewBox: "0 0 1100 234", class: "sm-svg", role: "img",
+    "aria-label": "Rover state machine: the running mode is highlighted" }, ...kids));
+  const open = store.get("smOpen", true);
+  $("#stateMachine").classList.toggle("closed", !open);
+  $("#smToggle").setAttribute("aria-expanded", String(open));
+  $("#smToggle").onclick = () => {
+    const now = $("#stateMachine").classList.toggle("closed");
+    store.set("smOpen", !now);
+    $("#smToggle").setAttribute("aria-expanded", String(!now));
+  };
+  updateStateMachine();
+}
+
+function smSet(id, cls) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  for (const c of ["on", "busy", "warn", "bad", "dim"]) el.classList.toggle(c, c === cls);
+}
+
+function updateStateMachine() {
+  if (!STATE || !$("#smSvg svg")) return;
+  const r = STATE.rover || {};
+  const rc = (r.containers || {}).rover || {};
+  const gc = ((STATE.ground || {}).containers || {}).ground || {};
+  const job = STATE.job;
+  const active = job && JOB_ACTIVE.has(job.state) ? job : null;
+  const jobCls = active ? ({ starting: "busy", stopping: "busy", running: "on", degraded: "warn" }[active.state]) : null;
+  const mission = active && SM_MODES.includes(active.mode);
+
+  const roverCls = r.link === "up" ? (rc.state === "running" ? "on" : rc.state ? "bad" : "dim")
+    : r.link === "connecting" ? "busy" : "dim";
+  smSet("sm-rdev", roverCls); smSet("sm-e-rstart", roverCls === "on" ? "on" : null);
+  smSet("sm-e-rdev", roverCls === "on" ? "on" : null);
+  smSet("sm-idle", active ? (mission ? null : "dim") : "on");
+  for (const id of SM_MODES) {
+    const cls = mission && active.mode === id ? jobCls : null;
+    smSet("sm-" + id, cls); smSet("sm-e-" + id, cls);
+  }
+  const test = $("#sm-test");
+  if (active && !mission) {
+    test.setAttribute("visibility", "visible");
+    test.setAttribute("class", "sm-test " + jobCls);
+    $("text", test).textContent = `Test: ${active.title} · ${active.state}`;
+  } else {
+    test.setAttribute("visibility", "hidden");
+  }
+  if (STATE.ground_enabled === false) {
+    smSet("sm-gdev", "dim"); smSet("sm-e-gstart", null); smSet("sm-e-gdev", null); smSet("sm-grun", "on");
+  } else {
+    const g = gc.state === "running" ? "on" : gc.state ? "bad" : "dim";
+    smSet("sm-gdev", g); smSet("sm-e-gstart", g === "on" ? "on" : null);
+    smSet("sm-e-gdev", g === "on" ? "on" : null); smSet("sm-grun", g === "on" ? "on" : "dim");
+  }
+  // the one-line summary in the card's header (also shown when collapsed)
+  const cls = active ? jobCls : "ok";
+  $("#smNow").replaceChildren(
+    h("span", { class: "dot " + (cls === "on" ? "ok" : cls) }),
+    h("b", { text: active ? active.title : "Idle" }),
+    h("span", { class: "muted", text: active ? active.state : "pick a mode, then Run" }));
+}
+
 // ------------------------------------------------------------------ mode panel
 function control(key, mode) {
   const spec = CAT.options[key];
@@ -307,14 +456,6 @@ function renderHeader() {
     pill("Foxglove bridge", lk.foxglove_ws ? "ok" : "", CAT.links.foxglove.ws),
     pill(PAD.name ? "Gamepad" : "No gamepad", PAD.name ? (PAD.sending ? "ok" : "") : "", PAD.name),
   ].filter(Boolean));
-  const job = s.job;
-  const strip = $("#stateStrip");
-  if (job && JOB_ACTIVE.has(job.state)) {
-    const cls = { running: "ok", starting: "busy", stopping: "busy", degraded: "warn" }[job.state];
-    strip.replaceChildren(h("span", { class: "dot " + cls }), h("b", { text: job.title }), h("span", { class: "muted", text: job.state }));
-  } else {
-    strip.replaceChildren(h("span", { class: "dot" }), h("b", { text: "Idle" }), h("span", { class: "muted", text: "pick a mode, then Run" }));
-  }
 }
 
 function renderQuick() {
@@ -613,6 +754,7 @@ async function pollState() {
   try {
     STATE = await api("/api/state");
     renderHeader(); renderSystems(); updateModeBadges(); updateJobUI(); renderProcs();
+    updateStateMachine();
   } catch (e) {
     $("#pills").replaceChildren(pill("Dashboard server unreachable", "bad", e.message));
   } finally { stateBusy = false; }
@@ -625,7 +767,7 @@ async function boot() {
     catch { await new Promise((r) => setTimeout(r, 1500)); }
   }
   if (!modeById(selected)) selected = CAT.modes[0].id;
-  renderQuick(); renderModes(); renderPanel(); renderCan();
+  renderQuick(); renderModes(); renderStateMachine(); renderPanel(); renderCan();
   await pollState();
   setInterval(pollState, 1500);
   setInterval(padTick, 50);
