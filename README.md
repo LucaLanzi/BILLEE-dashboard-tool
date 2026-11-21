@@ -25,8 +25,10 @@ make setup-dash
 make start
 ```
 
-`make setup-dash` asks for the **Jetson's IP address**, the SSH user and the repo paths on the
-rover, then sets up SSH and checks the rover (details in [Setup](#setup-make-setup-dash)).
+`make setup-dash` asks for the **Jetson's IP address**, the SSH user (default `billee`) and the
+repo paths on the rover, then sets up SSH and checks the rover (details in
+[Setup](#setup-make-setup-dash)). Run both in a terminal on the ground station itself, not inside
+a dev container: the dashboard starts the containers.
 
 `make start` opens the dashboard at `http://localhost:7780` and the RCM GDS. Ctrl-C in that
 terminal stops the dashboard and what it started on the ground station; the rover keeps running.
@@ -158,7 +160,7 @@ means every wheel node.
 [`scripts/setup.sh`](scripts/setup.sh), run on the ground station host (not in a container). It
 is safe to run again at any time:
 1. installs `python3`, `ssh`, `curl` and `xdg-utils` if missing, and checks Docker access;
-2. asks for the Jetson's IP address, the SSH user, and the billee-software-2027 and
+2. asks for the Jetson's IP address, the SSH user (default `billee`), and the billee-software-2027 and
    billee-hardware-2027 paths on the rover, and saves them in `config/local.json`;
 3. makes an SSH key if you have none and copies it to the rover (you type the password once);
 4. checks the rover:
@@ -176,7 +178,8 @@ is safe to run again at any time:
 6. optionally installs the devcontainer CLI. It's only needed to *create* a container that was
    never built.
 
-Non-interactive: `YES=1 ROVER_HOST=192.168.4.97 ROVER_USER=billee make setup-dash`.
+Non-interactive: `YES=1 ROVER_HOST=192.168.4.97 make setup-dash` (`ROVER_USER=` for a user other
+than `billee`).
 
 **Which computer.** The ground station is the x86 Linux machine with the ground-station dev
 container, and the dashboard runs the ground side (RViz, the gamepad, a local Foxglove bridge)
@@ -245,6 +248,7 @@ Options: `make start ARGS="--help"`, e.g. `make start ARGS="--no-browser --port 
 
 | Symptom | Fix |
 |---|---|
+| `make setup-dash`: "This is a dev container" | Run it in a terminal on the ground station itself, not in a dev container (a prompt like `ros_user@rover:/workspaces/…` is the rover's container). |
 | Rover link `down: Permission denied` | `make setup-dash` (copies your SSH key). |
 | Rover link `down: No route to host` | The rover is off or the radio link is down. It reconnects by itself. |
 | `can-up` or the hotspot: `a password is required` | Install the sudo rule: `make setup-dash`, step 5. |

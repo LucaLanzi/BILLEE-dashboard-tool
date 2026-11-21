@@ -17,7 +17,7 @@
 #      existing containers are started with plain docker)
 #
 # Options (environment):
-#   ROVER_HOST=10.110.0.230 ROVER_USER=billee ROVER_REPO=~/billee-software-2027
+#   ROVER_HOST=10.110.0.230 ROVER_USER=billee ROVER_REPO=~/billee-software-2027   (defaults)
 #   ROVER_HW_REPO=~/billee-hardware-2027
 #   YES=1            accept every default and every optional step, no questions
 #   SKIP_APT=1       don't install host packages
@@ -47,6 +47,16 @@ yesno() {  # yesno <question> <default y|n>
 }
 
 if [[ $EUID -eq 0 ]]; then die "run this as your normal user (it asks for sudo when it needs it)"; fi
+# The dashboard runs on the ground station's host: it starts the dev containers itself (with
+# docker) and reaches the rover over SSH. Inside a dev container it can do neither.
+if [[ -f /.dockerenv || -f /run/.containerenv ]] && [[ -z "${ALLOW_CONTAINER:-}" ]]; then
+  echo "  This is a dev container (e.g. ros_user@rover:/workspaces/...)." >&2
+  echo "  Run make setup-dash on the ground station itself, outside any container:" >&2
+  echo "  a terminal on the laptop/desktop you operate the rover from, in its billee-software-2027 clone." >&2
+  echo "  (ALLOW_CONTAINER=1 make setup-dash to continue anyway.)" >&2
+  exit 1
+fi
+me="$(id -un 2>/dev/null || echo "uid $(id -u)")"   # not $USER: a `docker exec` shell doesn't set it
 
 # ---------------------------------------------------------------------------- 1. host tools
 b "1/6 Ground station tools"
@@ -79,13 +89,14 @@ python3 - <<'EOF' || die "python3 3.8 or newer is needed"
 import sys; sys.exit(sys.version_info < (3, 8))
 EOF
 ok "python3 $(python3 -c 'import platform; print(platform.python_version())') (standard library only, nothing to pip install)"
+command -v ssh >/dev/null || die "ssh is missing: install openssh-client, then run make setup-dash again"
 ok "ssh $(ssh -V 2>&1 | cut -d, -f1)"
 if [[ "$os" == Darwin ]]; then
   ok "no Docker needed on a Mac (ground.mode auto -> none)"
 elif ! command -v docker >/dev/null; then
   warn "docker is missing: install Docker + the NVIDIA toolkit first (billee-software-2027 README §1)"
 elif ! docker info >/dev/null 2>&1; then
-  warn "docker needs sudo for $USER. Fix: sudo usermod -aG docker $USER, then log out and in"
+  warn "docker needs sudo for $me. Fix: sudo usermod -aG docker $me, then log out and in"
 else
   ok "docker $(docker version --format '{{.Server.Version}}' 2>/dev/null)"
 fi
@@ -97,7 +108,7 @@ read_cfg() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))$1)"
 cur_host="$(read_cfg "['rover']['host']")"; cur_user="$(read_cfg "['rover']['user']")"
 cur_repo="$(read_cfg "['rover']['repo']")"; cur_hw="$(read_cfg "['rover']['hardware_repo']")"
 host="${ROVER_HOST:-$(ask "Rover (Jetson) IP address" "${cur_host:-10.110.0.230}")}"
-user="${ROVER_USER:-$(ask "SSH user on the rover" "${cur_user:-$USER}")}"
+user="${ROVER_USER:-$(ask "SSH user on the rover" "${cur_user:-billee}")}"
 repo="${ROVER_REPO:-$(ask "billee-software-2027 path on the rover" "${cur_repo:-~/billee-software-2027}")}"
 hwrepo="${ROVER_HW_REPO:-$(ask "billee-hardware-2027 path on the rover (astronaut-streamer)" "${cur_hw:-~/billee-hardware-2027}")}"
 python3 - "$local_cfg" "$host" "$user" "$repo" "$hwrepo" <<'PYEOF'
@@ -158,7 +169,8 @@ r="${REPO/#\~/$HOME}"
 p() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 w() { printf '  \033[33m!\033[0m %s\n' "$*"; }
 command -v python3 >/dev/null && p "python3 on the rover" || w "no python3 on the rover host: sudo apt install python3"
-if docker info >/dev/null 2>&1; then p "docker usable by $USER"; else w "docker needs sudo for $USER on the rover: sudo usermod -aG docker $USER"; fi
+u="$(id -un)"
+if docker info >/dev/null 2>&1; then p "docker usable by $u"; else w "docker needs sudo for $u on the rover: sudo usermod -aG docker $u"; fi
 [ -d "$r/ros2_ws" ] && p "repo at $r" || w "no billee-software-2027 at $r (clone it there or set ROVER_REPO)"
 [ -x "$r/tooling/can-up" ] && p "tooling/can-up" || w "no $r/tooling/can-up"
 h="${HWREPO/#\~/$HOME}"
