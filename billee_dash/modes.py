@@ -26,10 +26,12 @@ OPTIONS = {
     "camera": {
         "label": "ZED 2i", "side": "rover", "type": "select", "basic": True,
         "choices": [["none", "Off"], ["cloud", "Point cloud"],
-                    ["openpose", "Video + OpenPose"], ["both", "Point cloud + video"]],
+                    ["openpose", "OpenPose + video"],
+                    ["both", "Point cloud + OpenPose + video"]],
         "default": "none",
-        "help": "rover.launch.py camera:=. The ZED video feed comes with OpenPose "
-                "(openpose / both), which needs ~3 GB free RAM on the Jetson.",
+        "help": "rover.launch.py camera:=. The ZED's video is OpenPose's rendering "
+                "(/people/debug_image), so it comes with OpenPose: there is no video without it. "
+                "OpenPose needs ~3 GB free RAM on the Jetson.",
     },
     "gamepad": {
         "label": "Gamepad on", "side": "both", "type": "select", "basic": True,
@@ -184,7 +186,7 @@ def light_step(pattern):
 MODES = [
     {
         "id": "teleop-drive", "group": "mission", "title": "Teleop · Drive", "short": "Drive",
-        "summary": "5 cameras · ZED 2i point cloud + video · Xbox drives the rover",
+        "summary": "5 cameras · ZED 2i point cloud + OpenPose video · Xbox drives the rover",
         "options": DRIVE_OPTIONS, "defaults": {"camera": "both"},
         "links": ["foxglove"],
     },

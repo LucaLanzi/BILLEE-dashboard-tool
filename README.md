@@ -73,7 +73,9 @@ before **Run**. The commands are the ones in billee-software-2027's `docs/runnin
 
 The settings cover every argument in `running.md`:
 - **drivetrain:** real ODESCs, or Gazebo on the Jetson (`xvfb-run -a vglrun -d egl`);
-- **ZED:** `camera:=none|cloud|openpose|both`;
+- **ZED:** off, point cloud, OpenPose + video, or point cloud + OpenPose + video
+  (`camera:=none|cloud|openpose|both`). The ZED's video is OpenPose's rendering, so there is no
+  video without OpenPose;
 - **gamepad:** where it's read ([below](#gamepad));
 - **CAN:** `can_interface`, `fault_policy`, `gear_ratio`, `vio`, `odom_tf`, `arm_camera`;
 - **ground station:** the RViz `view`, `fixed_frame`, RViz and Foxglove-bridge toggles;
