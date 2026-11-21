@@ -230,7 +230,7 @@ Options: `make start ARGS="--help"`, e.g. `make start ARGS="--no-browser --port 
  └──────────────────────────────────────┘               └──────────────────────────────────┘
 ```
 
-- **One devtool, two roles.** The commander (this repo, on the ground station) serves the page
+- **One dashboard, two roles.** The commander (this repo, on the ground station) serves the page
   and decides what to run. The listener, [`billee_dash/agent.py`](billee_dash/agent.py), runs the
   commands. On the ground station it runs inside the commander. On the rover the commander uploads
   it over SSH on connect and starts it, so there is nothing to install or keep in sync there.
