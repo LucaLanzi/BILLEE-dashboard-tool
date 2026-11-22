@@ -65,6 +65,22 @@ class TestModes(unittest.TestCase):
         _, rover, ground, _ = cmds("teleop-arm", arm_hw=True, arm_jog=True)
         self.assertEqual(rover[1], "ros2 launch arm_bringup arm.launch.py")
         self.assertEqual(ground[1], "ros2 launch arm_bringup arm_teleop.launch.py joy:=false")
+        pre, _, _, _ = cmds("teleop-arm", arm_hw=True)
+        self.assertEqual(pre, ["tooling/can-up can2", "tooling/can-clear-faults --iface can2",
+                               "tooling/can-up can3"])
+
+    def test_arm_can_interface(self):
+        pre, rover, _, _ = cmds("teleop-arm", arm_hw=True, arm_can_interface="can4")
+        self.assertIn("tooling/can-up can4", pre)
+        self.assertEqual(rover[1], "ros2 launch arm_bringup arm.launch.py can_interface:=can4")
+        pre, _, _, _ = cmds("teleop-arm", arm_hw=False)
+        self.assertNotIn("tooling/can-up can3", pre)
+        pre, _, _, _ = cmds("teleop-arm", arm_hw=True, can_up=False)
+        self.assertEqual(pre, ["tooling/can-clear-faults --iface can2"])
+        with self.assertRaises(modes.OptionError):
+            modes.build("teleop-arm", {"arm_hw": True, "arm_can_interface": "can2"})
+        with self.assertRaises(modes.OptionError):
+            modes.build("teleop-arm", {"arm_hw": True, "arm_can_interface": "can3; rm"})
 
     def test_bench_and_sim(self):
         pre, rover, ground, _ = cmds("bench", bench_rviz=False)

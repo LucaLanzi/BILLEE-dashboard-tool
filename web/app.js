@@ -624,6 +624,10 @@ function renderCan() {
   }, h("b", { text: `node ${n.node}` }), h("span", { text: n.where || n.joint }))));
   $("#nodesAll").onclick = () => { canSel.clear(); store.set("canNodes", []); renderCan(); };
   canHint();
+  $("#canArmIface").value = store.get("canArmIface", CAT.can_arm_default_iface);
+  $("#canArmBitrate").value = store.get("canArmBitrate", String(CAT.can_arm_default_bitrate));
+  $("#canArmIface").oninput = (e) => store.set("canArmIface", e.target.value.trim());
+  $("#canArmBitrate").oninput = (e) => store.set("canArmBitrate", e.target.value.trim());
 }
 function canHint() {
   $("#canHint").textContent = canSel.size ? `Node actions apply to ${[...canSel].sort((a, b) => a - b).join(", ")}.` : "Node actions apply to every wheel node.";
@@ -637,6 +641,15 @@ async function canAction(action) {
   if (action === "down" && !await confirmBox(`Take ${iface} down? A running drivetrain loses its bus.`, "Take down")) return;
   try {
     await api("/api/can", { action, iface, bitrate: action === "up" ? $("#canBitrate").value.trim() : null, nodes });
+    openDrawer(true); setTab("rover");
+  } catch (e) { toast(e.message, true); }
+}
+
+async function canArmAction(action) {
+  const iface = $("#canArmIface").value.trim();
+  if (action === "down" && !await confirmBox(`Take ${iface} down? A running arm loses its bus.`, "Take down")) return;
+  try {
+    await api("/api/can", { action, iface, bitrate: action === "up" ? $("#canArmBitrate").value.trim() : null });
     openDrawer(true); setTab("rover");
   } catch (e) { toast(e.message, true); }
 }
@@ -864,6 +877,7 @@ async function boot() {
   $("#outClear").onclick = () => { LINES.length = 0; renderOut(); };
   $("#procFilter").onchange = (e) => { procFilter = e.target.value; renderProcs(); renderOut(); };
   $$("[data-can]").forEach((b) => (b.onclick = () => canAction(b.dataset.can)));
+  $$("[data-can-arm]").forEach((b) => (b.onclick = () => canArmAction(b.dataset.canArm)));
   openDrawer(store.get("drawer", false));
   setTimeout(() => $("#splash").classList.add("gone"), Math.max(0, 1300 - (Date.now() - t0)));
 }

@@ -763,6 +763,8 @@ class Commander:
         cat["can_nodes"] = self.nodes
         cat["can_default_iface"] = cfg.get("can", {}).get("iface", "can2")
         cat["can_default_bitrate"] = cfg.get("can", {}).get("bitrate", 500000)
+        cat["can_arm_default_iface"] = cfg.get("can_arm", {}).get("iface", "can3")
+        cat["can_arm_default_bitrate"] = cfg.get("can_arm", {}).get("bitrate", 1000000)
         return cat
 
     # ---- startup

@@ -46,6 +46,10 @@
     "iface": "can2",
     "bitrate": 500000
   },
+  "can_arm": {
+    "iface": "can3",
+    "bitrate": 1000000
+  },
   "status_light": {
     "idle": true
   },

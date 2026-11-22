@@ -54,7 +54,7 @@ OPTIONS = {
     "can_interface": {
         "label": "CAN interface", "side": "rover", "type": "text", "default": "can2",
         "pattern": r"v?can[0-9]{1,2}", "placeholder": "can2",
-        "help": "The drivetrain's bus. The USB-CAN adapter has also shown up as can3.",
+        "help": "The drivetrain's bus: can2 (tooling/can-pin keeps the drivetrain dongle there).",
     },
     "fault_policy": {
         "label": "Wheel fault policy", "side": "rover", "type": "select",
@@ -134,8 +134,14 @@ OPTIONS = {
     "arm_hw": {
         "label": "Arm hardware (arm.launch.py)", "side": "rover", "type": "bool", "basic": True,
         "default": False,
-        "help": "ros2 launch arm_bringup arm.launch.py on the rover. Needs the arm_bringup "
-                "package (branch kevin/arm-bringup).",
+        "help": "ros2 launch arm_bringup arm.launch.py on the rover (the P17/P20 drives over "
+                "CAN, the RoboClaws over UART).",
+    },
+    "arm_can_interface": {
+        "label": "Arm CAN interface", "side": "rover", "type": "text", "default": "can3",
+        "pattern": r"v?can[0-9]{1,2}", "placeholder": "can3",
+        "help": "The arm's bus: can3 (tooling/can-pin keeps the arm dongle there). With Bring CAN "
+                "up first, tooling/can-up brings it up too (1 Mbit/s for can3).",
     },
     "arm_jog": {
         "label": "Arm jog teleop", "side": "ground", "type": "bool", "basic": True,
@@ -193,7 +199,8 @@ MODES = [
     {
         "id": "teleop-arm", "group": "mission", "title": "Teleop · Arm", "short": "Arm",
         "summary": "Teleop · Drive plus the arm. Xbox mode toggle (drive / arm)",
-        "options": ["arm_hw", "arm_jog"] + DRIVE_OPTIONS, "defaults": {"camera": "cloud"},
+        "options": ["arm_hw", "arm_can_interface", "arm_jog"] + DRIVE_OPTIONS,
+        "defaults": {"camera": "cloud"},
         "links": ["foxglove"],
         "todo": "Xbox drive/arm toggle and motion planning are not built yet.",
     },
@@ -419,9 +426,19 @@ def build(mode_id, values, cfg=None, ground=True):
         plan["rover"].append(light_step(light))
     if mode_id == "teleop-arm":
         if o["arm_hw"]:
+            arm_iface = o.get("arm_can_interface", "can3")
+            if arm_iface == iface:
+                raise OptionError(f"Arm CAN interface: {arm_iface} is the drivetrain's bus; "
+                                  "the arm needs its own (can3)")
+            if o.get("can_up") and not arm_iface.startswith("vcan"):
+                # can-up's own default bitrate for can3 is the arm's 1 Mbit/s.
+                plan["pre"].append({**can_up_step(arm_iface), "id": "can-up-arm"})
+            cmd = "ros2 launch arm_bringup arm.launch.py"
+            if arm_iface != "can3":
+                cmd += f" can_interface:={arm_iface}"
             plan["rover"].append({
                 "id": "mode-arm", "label": "arm.launch.py", "where": "container", "ros": True,
-                "cmd": "ros2 launch arm_bringup arm.launch.py"})
+                "cmd": cmd})
         if o["arm_jog"]:
             plan["ground"].append({
                 "id": "mode-arm-jog", "label": "arm_teleop.launch.py", "where": "container",

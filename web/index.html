@@ -98,6 +98,19 @@
       </div>
       <p class="hint" id="canHint"></p>
     </div>
+    <div class="card" id="canArm">
+      <h3>CAN · arm</h3>
+      <div class="can-row">
+        <label>Interface <input id="canArmIface" spellcheck="false" autocomplete="off"></label>
+        <label>Bitrate <input id="canArmBitrate" inputmode="numeric" autocomplete="off"></label>
+      </div>
+      <div class="btn-row">
+        <button data-can-arm="up">Up</button>
+        <button data-can-arm="status">Status</button>
+        <button data-can-arm="down" class="ghost">Down</button>
+      </div>
+      <p class="hint">The P17/P20 drives. <code>tooling/can-pin</code> keeps the arm dongle on can3.</p>
+    </div>
   </section>
 </main>
 
