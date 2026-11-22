@@ -336,6 +336,7 @@ function renderPanel() {
     mode.todo ? h("p", { class: "todo-note", text: "TODO: " + mode.todo }) : null,
     h("div", { class: "steps", id: "steps" }),
     h("div", { class: "pad", id: "padBox", hidden: true }),
+    h("div", { class: "pad arm-sel", id: "armBox", hidden: true }),
     h("p", { class: "job-msg", id: "jobMsg" }),
     basic.length ? h("div", { class: "opts" }, basic.map((k) => optRow(k, mode))) : null,
     adv.length ? h("details", { class: "more", open: store.get("advOpen", false) },
@@ -827,6 +828,27 @@ function padTick() {
   }
   renderPad();
 }
+// Teleop · Arm: the joint the gamepad has selected (B / X cycle), from the teleop's own log lines.
+function renderArm() {
+  const box = $("#armBox");
+  if (!box) return;
+  const j = STATE && STATE.job;
+  const a = (STATE && STATE.arm) || {};
+  const running = j && j.mode === "teleop-arm" && ["starting", "running", "degraded"].includes(j.state);
+  box.hidden = !(running && a.joint);
+  if (box.hidden) return;
+  const state = a.locked ? ["drive mode (RT): arm locked", "warn"]
+    : a.jogging ? ["jogging", "ok"] : ["holding", ""];
+  box.replaceChildren(
+    h("span", { class: "muted", text: "Arm" }),
+    h("b", { text: a.joint }),
+    a.count ? h("span", { class: "muted", text: `${a.index}/${a.count} · ${a.driver}` }) : null,
+    h("span", { class: "arm-pos", text: a.pos && a.pos !== "?" ? `${a.pos} rad` : "no position yet" }),
+    h("span", { class: "lb" + (state[1] === "ok" ? " on" : ""), text: state[0] }),
+    a.solenoid !== undefined ? h("span", { class: "lb" + (a.solenoid ? " on" : ""), text: a.solenoid ? "solenoid ON" : "solenoid off" }) : null,
+    h("span", { class: "muted arm-hint", text: "B / X: next / previous joint · LT + stick: jog · LT + A: solenoid" }));
+}
+
 function renderPad() {
   const box = $("#padBox");
   if (!box) return;
@@ -864,7 +886,7 @@ async function pollState() {
   try {
     STATE = await api("/api/state");
     renderHeader(); renderSystems(); updateModeBadges(); updateJobUI(); renderProcs();
-    updateStateMachine(); updateBuild();
+    updateStateMachine(); updateBuild(); renderArm();
   } catch (e) {
     $("#pills").replaceChildren(pill("Dashboard server unreachable", "bad", e.message));
   } finally { stateBusy = false; }

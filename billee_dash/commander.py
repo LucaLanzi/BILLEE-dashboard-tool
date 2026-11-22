@@ -134,6 +134,42 @@ def tcp_open(url, timeout=0.6):
         return False
 
 
+# --------------------------------------------------------------------------- arm teleop state
+ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+ARM_SELECTED_RE = re.compile(r"selected \[(\d+)/(\d+)\] (\S+) \((\w+)\) pos (\S+) rad")
+ARM_JOGGING_RE = re.compile(r"jogging (\S+) from (\S+) rad")
+ARM_STOPPED_RE = re.compile(r"(\S+) stopped at (\S+) rad")
+ARM_SOLENOID_RE = re.compile(r"solenoid (ON|off)")
+
+
+def arm_teleop_update(arm, text):
+    """Fold one arm_joy_teleop log line into the arm state shown in the dashboard: the joint the
+    gamepad has selected, its position, whether it's jogging, the solenoid, the drive lockout.
+    The teleop logs each of these anyway, so the dashboard needs no ROS connection for it."""
+    text = ANSI_RE.sub("", text)
+    m = ARM_SELECTED_RE.search(text)
+    if m:
+        arm.update(index=int(m.group(1)), count=int(m.group(2)), joint=m.group(3),
+                   driver=m.group(4), pos=m.group(5), jogging=False)
+        return True
+    m = ARM_JOGGING_RE.search(text)
+    if m:
+        arm.update(joint=m.group(1), pos=m.group(2), jogging=True, locked=False)
+        return True
+    m = ARM_STOPPED_RE.search(text)
+    if m:
+        arm.update(joint=m.group(1), pos=m.group(2), jogging=False)
+        return True
+    m = ARM_SOLENOID_RE.search(text)
+    if m:
+        arm["solenoid"] = m.group(1) == "ON"
+        return True
+    if "arm locked out" in text:
+        arm.update(locked=True, jogging=False)
+        return True
+    return False
+
+
 # --------------------------------------------------------------------------- combined output
 class Output:
     """Every line from both machines plus the dashboard's own, in one sequence."""
@@ -142,11 +178,14 @@ class Output:
         self.lines = collections.deque(maxlen=maxlen)
         self.seq = 0
         self.cond = threading.Condition()
+        self.arm = {}  # Teleop · Arm: what the gamepad has selected (arm_teleop_update)
 
     def add(self, side, proc, text, stream="out", ts=None):
         with self.cond:
             self.seq += 1
             self.lines.append([self.seq, ts or round(time.time(), 3), side, proc, stream, text])
+            if proc == "mode-arm-jog":
+                arm_teleop_update(self.arm, text)
             self.cond.notify_all()
 
     def since(self, seq, wait=0.0, limit=3000):
@@ -484,6 +523,7 @@ class Commander:
 
     def start_mode(self, mode_id, options):
         plan = modes.build(mode_id, options, self.cfg, ground=self.ground_enabled)
+        self.out.arm.clear()  # a new run: nothing selected until its teleop says so
         with self.job_lock:
             if self.job and self.job["state"] in ("starting", "running", "degraded", "stopping"):
                 raise ClientError(f"{self.job['title']} is {self.job['state']}: stop it first")
@@ -743,6 +783,7 @@ class Commander:
             "ground": ground,
             "links": self.cache.get("links", {}),
             "job": self.job_view(),
+            "arm": dict(self.out.arm),
             "updated": self.cache.get("updated"),
         }
 

@@ -185,6 +185,9 @@ h3 { font-size: 13px; margin: 0 0 12px; color: var(--muted); font-weight: 600; l
 .pad .bar i { position: absolute; left: 0; right: 0; background: var(--accent); }
 .pad .lb { font: 600 10.5px var(--mono); padding: 2px 6px; border-radius: 4px; border: 1px solid var(--line-2); color: var(--dim); }
 .pad .lb.on { color: #05140c; background: var(--ok); border-color: var(--ok); }
+.arm-sel b { font: 600 14px var(--mono); }
+.arm-sel .arm-pos { font: 500 12.5px var(--mono); font-variant-numeric: tabular-nums; }
+.arm-sel .arm-hint { margin-left: auto; font-size: 12px; }
 .job-msg { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
 .job-msg.bad { color: var(--bad); }
 
