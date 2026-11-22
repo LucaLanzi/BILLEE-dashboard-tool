@@ -49,8 +49,10 @@ terminal stops the dashboard and what it started on the ground station; the rove
   next to them show what is reachable.
 - **Systems** (right):
   - the rover link and the free RAM on each machine;
-  - each dev container, with **Start** and **Stop all**;
+  - each dev container, with **Start**, **Stop all** and **Rebuild** ([below](#rebuild));
   - the GDS services, with **Restart**.
+- **Build** (right): `pixi run build` in the rover's container, the ground's, or both
+  ([below](#build)).
 - **CAN** (right): every `can-up` and `can-clear-faults` command, per node ([below](#can-panel)).
 - **Output** (bottom bar): the verbose terminal output of the **Rover**, the **Ground** station,
   the **Dashboard** itself (what it did and why), or **All** of it. Pick a process on the left to
@@ -165,6 +167,43 @@ It stops on its own:
 - `diff_drive_controller` stops the wheels 0.25 s after its last command, whatever happens (a
   dropped link, a crashed browser).
 
+## Build
+
+The **Build** card runs `pixi run build` (`colcon build --symlink-install` over `ros2_ws/src`)
+in the dev containers, as you would in a `pixi shell`:
+
+| Button | Runs |
+|---|---|
+| **Rover** | `pixi run -e l4t build --parallel-workers 2 --executor sequential` in the l4t container (the low-RAM flags from `running.md`, `rover.build_args`) |
+| **Ground** | `pixi run -e default build` in the x86 container (`ground.build_args`) |
+| **Both** | both at once |
+
+- **Packages:** names separated by spaces or commas build only those
+  (`--packages-select`). **with their dependencies** builds what they need too
+  (`--packages-up-to`). Empty builds the whole workspace.
+- **Container:** a stopped container is started first.
+- **Progress:** the card shows each side's command and how its last build ended. The output is
+  under Output (process **pixi run build**), where **Stop** cancels it.
+- **While a mode runs:** the dashboard asks first. The new build replaces files the running nodes
+  use: run the mode again to load it. Launches always go through `pixi run`, so they pick up a
+  new build without `source install/local_setup.bash`.
+
+### Rebuild
+
+**Rebuild** on a container's row is VS Code's **Rebuild Container**:
+`devcontainer up --remove-existing-container`, on the machine that has the container.
+1. It Ctrl-Cs what the dashboard runs in the container.
+2. It builds the image again from the container's `devcontainer.json`. Docker's cache keeps the
+   slow layers, so OpenPose isn't recompiled unless an early layer changed.
+3. It creates a new container and runs its lifecycle commands (`postStartCommand`, `pixi install`).
+
+- **What stays:** the workspace is the repo, mounted into the container, so `ros2_ws/build`,
+  `install` and `.pixi` stay.
+- **What stops:** a VS Code window attached to the container disconnects.
+- **Not while a mode runs:** stop the mode first.
+- **The CLI:** it needs the devcontainer CLI on that machine. `make setup-dash` installs it on
+  both (step 6).
+
 ## CAN panel
 
 Every command of `tooling/can-up` and `tooling/can-clear-faults`, run on the Jetson host:
@@ -200,8 +239,12 @@ is safe to run again at any time:
 
    The hotspot script lives in your home directory, so this lets your user run that script as
    root. That is fine on the team's Jetson, but it's worth knowing;
-6. optionally installs the devcontainer CLI. It's only needed to *create* a container that was
-   never built.
+6. installs the devcontainer CLI, on the ground station and on the rover, for
+   [Rebuild](#rebuild) and to create a container that was never built:
+   - **Ground station:** with npm, into `~/.billee-dash/tools` (needs Node 20+).
+   - **Rover:** gets a copy of it. If the Jetson has no Node 20+, the ground station downloads
+     Node 24 from nodejs.org, checks its SHA-256 and unpacks it into `~/.billee-dash/tools/node`
+     on the rover. The Jetson needs no internet for this.
 
 Non-interactive: `YES=1 ROVER_HOST=192.168.4.97 make setup-dash` (`ROVER_USER=` for a user other
 than `billee`).
@@ -224,7 +267,8 @@ overrides any of them:
 | `rover.repo` / `rover.hardware_repo` | `~/billee-software-2027` / `~/billee-hardware-2027` | on the Jetson host |
 | `rover.devcontainer` / `ground.devcontainer` | `.devcontainer/l4t/…`, `.devcontainer/devcontainer.json` | which container |
 | `*.container_name` | empty | use a fixed container name instead of the labels |
-| `rover.services` | the two GDS units | shown under Systems |
+| `rover.services` | `billee-lan-gds` (RCM), `billee-scm-lan-gds` (Science) | the GDS units shown under Systems, and named in the sudo rule |
+| `rover.build_args` / `ground.build_args` | `--parallel-workers 2 --executor sequential` / empty | extra colcon flags for **Build** |
 | `rover.joy_relay_port` | `8771` | the gamepad relay on the rover (reached through the SSH tunnel) |
 | `ground.mode` | `auto` | `container` (runs the ground side here), `none` (rover only); `auto` = `none` on macOS |
 | `links.*` | `http://{rover}:5000`, `:5001`, `ws://{rover}:8765`, `https://{rover}:8443` | `{rover}` is `rover.host` |
@@ -286,6 +330,9 @@ Options: `make start ARGS="--help"`, e.g. `make start ARGS="--no-browser --port 
 | Docker `permission denied` | `sudo usermod -aG docker $USER`, then log out and in (on that machine). |
 | Foxglove opens the web app instead of the desktop app | Install the desktop app, or set `foxglove.open_with` to `desktop`. The web app can't reach `ws://` addresses on the LAN in every browser. |
 | Leftover ROS processes after the dashboard was killed | **Systems → Stop all** on that container. |
+| A GDS service: `no such unit on the rover` | `rover.services` names a unit the Jetson doesn't have. List them on the Jetson with `systemctl list-units '*gds*'`, set `rover.services` in `config/local.json`, then `make setup-dash` (step 5 updates the sudo rule). |
+| GDS **Restart**: `a password is required` | The sudo rule names other units: `make setup-dash`, step 5. |
+| **Rebuild**: `needs the devcontainer CLI` | `make setup-dash`, step 6. |
 | Gamepad box says "No gamepad" | Press a button on it: browsers hide a pad until then. |
 | Gamepad box says "gamepad relay not reachable" | The relay is still starting, or it died: see Rover output, process **gamepad relay**. |
 

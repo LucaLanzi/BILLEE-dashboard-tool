@@ -549,6 +549,31 @@ def can_command(action, iface="can2", bitrate=None, nodes=None):
     raise OptionError(f"unknown CAN action {action!r}")
 
 
+# --------------------------------------------------------------------------- build
+PKG_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+
+
+def build_step(packages="", deps=False, build_args=""):
+    """`pixi run build` (colcon build --symlink-install over src/, ros2_ws/pixi.toml) in a dev
+    container. packages: names separated by spaces or commas, none = the whole workspace;
+    deps: --packages-up-to (with their dependencies) instead of --packages-select.
+    build_args: extra colcon flags from the config (the Jetson's low-RAM ones)."""
+    names = []
+    for n in re.split(r"[\s,]+", str(packages or "").strip()):
+        if not n:
+            continue
+        if not PKG_RE.fullmatch(n):
+            raise OptionError(f"'{n}' is not a package name (letters, digits and _)")
+        if n not in names:
+            names.append(n)
+    args = str(build_args or "").split()
+    if names:
+        args += ["--packages-up-to" if deps else "--packages-select"] + names
+    label = "pixi run build" + (f" ({' '.join(names)})" if names else "")
+    return {"id": "build", "label": label, "where": "container", "ros": True,
+            "cmd": " ".join(["build"] + args)}
+
+
 def ground_defaults(mode, values):
     """Without a ground container the gamepad defaults to the browser."""
     out = dict(values or {})

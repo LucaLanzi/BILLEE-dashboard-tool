@@ -13,8 +13,8 @@
 #   4. checks the rover: python3, docker, the repo, the CAN tools
 #   5. optional: a sudo rule on the rover so the dashboard can run can-up, the astronaut hotspot
 #      and server, and restart the GDS services without a password prompt
-#   6. optional: the devcontainer CLI (only needed to CREATE a container that was never built;
-#      existing containers are started with plain docker)
+#   6. optional: the devcontainer CLI, here and on the rover (for Rebuild in the dashboard, and to
+#      create a container that was never built; existing containers start with plain docker)
 #
 # Options (environment):
 #   ROVER_HOST=10.110.0.230 ROVER_USER=billee ROVER_REPO=~/billee-software-2027   (defaults)
@@ -163,8 +163,21 @@ fi
 
 # ---------------------------------------------------------------------------- 4. rover checks
 b "4/6 Rover checks"
+# The GDS units shown under Systems (rover.services in config/dashboard.json, local.json can
+# override): checked here, and named in the sudo rule (step 5).
+services="$(python3 - "$here/config" <<'PY'
+import json, os, sys
+d = sys.argv[1]
+svc = json.load(open(os.path.join(d, "dashboard.json")))["rover"].get("services", [])
+try:
+    svc = json.load(open(os.path.join(d, "local.json"))).get("rover", {}).get("services", svc)
+except (OSError, ValueError):
+    pass
+print(" ".join(s for s in svc if s.replace("-", "").replace("_", "").replace(".", "").replace("@", "").isalnum()))
+PY
+)"
 # shellcheck disable=SC2016
-ssh -o BatchMode=yes "$target" "REPO=$repo HWREPO=$hwrepo bash -s" <<'EOF' || true
+ssh -o BatchMode=yes "$target" "REPO=$repo HWREPO=$hwrepo SERVICES='$services' bash -s" <<'EOF' || true
 r="${REPO/#\~/$HOME}"
 p() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 w() { printf '  \033[33m!\033[0m %s\n' "$*"; }
@@ -183,7 +196,10 @@ if docker ps -a --filter "label=devcontainer.local_folder=$(realpath "$r" 2>/dev
 else
   w "no l4t dev container yet: build it once (VS Code: Reopen in Container -> rover-roshumble_l4t-aarch64)"
 fi
-for s in billee-rcm-lan-gds billee-scm-lan-gds; do
+for s in $SERVICES; do
+  if [ "$(systemctl show -p LoadState --value "$s" 2>/dev/null)" = not-found ]; then
+    w "$s: no such systemd unit on the rover (fix rover.services in config/local.json)"; continue
+  fi
   st=$(systemctl is-active "$s" 2>/dev/null); [ "$st" = active ] && p "$s active" || w "$s: ${st:-unknown}"
 done
 if sudo -n true 2>/dev/null; then p "passwordless sudo"; else
@@ -198,14 +214,15 @@ hotspot="$(ssh -o BatchMode=yes "$target" "realpath -m $hwrepo/astronaut-streame
 sudo_ok() {
   ssh -o BatchMode=yes "$target" "sudo -n true 2>/dev/null || { sudo -n -l /usr/sbin/ip link &&
     sudo -n -l /usr/bin/bash $hotspot up &&
-    sudo -n -l /usr/bin/systemctl restart astronaut-mediamtx astronaut-web; } >/dev/null 2>&1"
+    sudo -n -l /usr/bin/systemctl restart astronaut-mediamtx astronaut-web$(
+    for sv in $services; do printf ' && sudo -n -l /usr/bin/systemctl restart %s' "$sv"; done); } >/dev/null 2>&1"
 }
 if sudo_ok; then
   ok "already allowed"
 elif yesno "Install /etc/sudoers.d/billee-dash on the rover (ip, modprobe vcan, the astronaut hotspot script, systemctl for the GDS and astronaut units)?" y; then
   sc=/usr/bin/systemctl
   rule="$user ALL=(root) NOPASSWD: /usr/sbin/ip, /sbin/ip, /usr/sbin/modprobe vcan, /sbin/modprobe vcan"
-  for a in restart start stop; do rule+=", $sc $a billee-rcm-lan-gds, $sc $a billee-scm-lan-gds"; done
+  for a in restart start stop; do for sv in $services; do rule+=", $sc $a $sv"; done; done
   rule+=", $sc restart astronaut-mediamtx astronaut-web, $sc stop astronaut-web astronaut-mediamtx"
   for a in up start stop; do rule+=", /usr/bin/bash $hotspot $a, /bin/bash $hotspot $a"; done
   echo "  enter $user's sudo password on the rover when asked"
@@ -221,20 +238,74 @@ fi
 fi  # SKIP_ROVER
 
 # ---------------------------------------------------------------------------- 6. devcontainer CLI
-b "6/6 devcontainer CLI (optional)"
-cli="$state/tools/node_modules/.bin/devcontainer"
+# The dashboard's Rebuild (Systems -> a container's Rebuild, like VS Code's Rebuild Container) runs
+# `devcontainer up --remove-existing-container`, and creating a container that was never built
+# runs `devcontainer up`; both on the machine that has the container. Starting an existing one
+# needs only docker. The CLI is plain JavaScript (no native modules), so the rover gets a copy of
+# this machine's, plus a Node binary if it has none: the Jetson needs no internet for it.
+b "6/6 devcontainer CLI (to rebuild containers from the dashboard)"
+tools="$state/tools"
+cli_js="node_modules/@devcontainers/cli/devcontainer.js"
+node_major() { "${1:-node}" -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0; }
+ground_cli() {  # the CLI in $tools on this machine (installs it with npm if needed)
+  [[ -f "$tools/$cli_js" ]] && return 0
+  command -v npm >/dev/null && [[ "$(node_major)" -ge 20 ]] || return 1
+  npm install --silent --prefix "$tools" @devcontainers/cli >/dev/null && [[ -f "$tools/$cli_js" ]]
+}
 if [[ "$os" == Darwin ]]; then
-  ok "not needed on a Mac"
-elif command -v devcontainer >/dev/null || [[ -x "$cli" ]]; then
-  ok "devcontainer CLI present"
-elif command -v npm >/dev/null && [[ "$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)" -ge 18 ]]; then
-  if yesno "Install the devcontainer CLI (npm, into $state/tools) to create containers that were never built?" n; then
-    npm install --silent --prefix "$state/tools" @devcontainers/cli && ok "installed $cli"
-  else
-    ok "skipped (existing containers start with docker; build new ones once in VS Code)"
-  fi
+  ok "ground: not needed on a Mac"
+elif command -v devcontainer >/dev/null || [[ -f "$tools/$cli_js" ]]; then
+  ok "ground: devcontainer CLI present"
+elif ! command -v npm >/dev/null || [[ "$(node_major)" -lt 20 ]]; then
+  warn "ground: skipped, no Node 20+ (Rebuild needs it; existing containers still start with docker)"
+elif yesno "Install the devcontainer CLI on the ground station (npm, into $tools)?" y; then
+  ground_cli && ok "ground: installed $tools/$cli_js" || warn "ground: npm install @devcontainers/cli failed"
 else
-  ok "skipped: no Node 18+ (existing containers start with docker; build new ones once in VS Code)"
+  ok "ground: skipped"
+fi
+
+if [[ -z "${SKIP_ROVER:-}" ]]; then
+  # shellcheck disable=SC2016
+  rover_has="$(ssh -o BatchMode=yes "$target" 'n=~/.billee-dash/tools/node/bin/node; [ -x "$n" ] || n=$(command -v node || true)
+    m=$([ -n "$n" ] && "$n" -p "process.versions.node.split(\".\")[0]" 2>/dev/null || echo 0)
+    c=no; [ -f ~/.billee-dash/tools/'"$cli_js"' ] || command -v devcontainer >/dev/null && c=yes
+    echo "$m $c $(uname -m)"' 2>/dev/null || echo "0 no ?")"
+  read -r r_node r_cli r_arch <<<"$rover_has"
+  if [[ "$r_node" -ge 20 && "$r_cli" == yes ]]; then
+    ok "rover: devcontainer CLI present (Node $r_node)"
+  elif ! yesno "Install the devcontainer CLI on the rover (into ~/.billee-dash/tools; for Rebuild)?" y; then
+    ok "rover: skipped (the dashboard can't rebuild the rover's container without it)"
+  else
+    if [[ "$r_cli" != yes ]]; then
+      if ground_cli; then
+        tar -C "$tools" -cf - node_modules/@devcontainers | ssh -o BatchMode=yes "$target" \
+          'mkdir -p ~/.billee-dash/tools && tar -C ~/.billee-dash/tools -xf -' \
+          && ok "rover: copied the devcontainer CLI" || warn "rover: copying the CLI failed"
+      else
+        warn "rover: needs a copy of the CLI from this machine, which needs Node 20+ and npm here"
+      fi
+    fi
+    if [[ "$r_node" -lt 20 ]]; then
+      # Node 24 LTS from nodejs.org, checked against its published SHA-256, unpacked on the rover.
+      case "$r_arch" in aarch64|arm64) na=arm64 ;; x86_64) na=x64 ;; *) na="" ;; esac
+      base="https://nodejs.org/dist/latest-v24.x"
+      tmp="$(mktemp -d)"
+      if [[ -z "$na" ]]; then
+        warn "rover: unknown architecture '$r_arch': install Node 20+ there yourself"
+      elif sums="$(curl -fsSL "$base/SHASUMS256.txt")" &&
+           line="$(grep -E " node-v[0-9.]+-linux-$na\.tar\.xz\$" <<<"$sums" | head -1)" && [[ -n "$line" ]] &&
+           curl -fsSL -o "$tmp/node.tar.xz" "$base/${line##* }" &&
+           [[ "$( (sha256sum "$tmp/node.tar.xz" 2>/dev/null || shasum -a 256 "$tmp/node.tar.xz") | cut -d' ' -f1)" == "${line%% *}" ]]; then
+        ssh -o BatchMode=yes "$target" 'rm -rf ~/.billee-dash/tools/node && mkdir -p ~/.billee-dash/tools/node &&
+          tar -C ~/.billee-dash/tools/node --strip-components=1 -xJf - && ~/.billee-dash/tools/node/bin/node --version' \
+          < "$tmp/node.tar.xz" && ok "rover: installed ${line##* } into ~/.billee-dash/tools/node" \
+          || warn "rover: unpacking Node failed"
+      else
+        warn "rover: could not download Node from $base (no internet here?)"
+      fi
+      rm -rf "$tmp"
+    fi
+  fi
 fi
 
 echo

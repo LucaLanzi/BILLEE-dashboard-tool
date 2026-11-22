@@ -491,11 +491,27 @@ async function act(path, body, okMsg) {
 
 function containerButtons(side, c, linkUp) {
   if (!linkUp) return [];
+  // the agent's start / rebuild task for this container (one at a time)
+  const task = allProcs().find((p) => p.side === side && p.id === `container-${side}` && ALIVE.has(p.state));
+  if (task) return [h("button", { class: "small ghost", disabled: true, title: task.label }, /rebuild/.test(task.label) ? "Rebuilding…" : "Starting…")];
+  const rebuild = h("button", { class: "small ghost", title: `Rebuild Container: a new container from ${CAT.devcontainers[side]}`,
+    onclick: () => rebuildContainer(side) }, "Rebuild");
   if (c.state === "running") {
     return [h("button", { class: "small ghost", title: "Ctrl-C every ROS process the dashboard started in this container",
-      onclick: async () => { if (await confirmBox(`Ctrl-C every process the dashboard started in the ${side} container?`, "Stop all")) act("/api/container", { side, action: "stop_ros" }, "Sent Ctrl-C"); } }, "Stop all")];
+      onclick: async () => { if (await confirmBox(`Ctrl-C every process the dashboard started in the ${side} container?`, "Stop all")) act("/api/container", { side, action: "stop_ros" }, "Sent Ctrl-C"); } }, "Stop all"), rebuild];
   }
-  return [h("button", { class: "small", onclick: () => { openDrawer(true); act("/api/container", { side, action: "start" }, `Starting the ${side} container`); } }, "Start")];
+  const start = h("button", { class: "small", onclick: () => { openDrawer(true); act("/api/container", { side, action: "start" }, `Starting the ${side} container`); } }, "Start");
+  return c.state === "missing" ? [start] : [start, rebuild];  // Start creates a missing one
+}
+
+async function rebuildContainer(side) {
+  const ok = await confirmBox(`Rebuild the ${side} dev container?\n\n` +
+    `Like VS Code's Rebuild Container: removes the container, builds its image again from ${CAT.devcontainers[side]} ` +
+    "(Docker's cache keeps the slow layers) and creates a new one. Every process in it stops, and a VS Code window " +
+    "attached to it disconnects. The workspace, its builds and pixi environment stay.", "Rebuild");
+  if (!ok) return;
+  openDrawer(true); setTab(side);
+  act("/api/container", { side, action: "rebuild" }, `Rebuilding the ${side} container`);
 }
 
 function renderSystems() {
@@ -516,18 +532,78 @@ function renderSystems() {
       ...containerButtons("rover", rc, up)),
     s.ground_enabled === false
       ? sysRow("Ground station", "", "no container here: rover only, gamepad from this browser", "")
-      : sysRow("Ground container · x86", CSTATE[gc.state] || "", gc.error || gc.name || gc.state || "", mem(gh), ...containerButtons("ground", gc, true)),
+      : sysRow("Ground container · x86", CSTATE[gc.state] || "", [gc.error || gc.name || gc.state || "", mem(gh)].filter(Boolean).join(" · "), "",
+        ...containerButtons("ground", gc, true)),
   ];
   for (const name of CAT.services) {
     const st = (r.services || {})[name];
-    const label = /rcm/.test(name) ? "RCM GDS service" : /scm/.test(name) ? "Science GDS service" : name;
+    const label = /scm/.test(name) ? "Science GDS service" : /gds/.test(name) ? "RCM GDS service" : name;
+    const detail = st === "not-found" ? `${name} · no such unit on the rover (rover.services)` : `${name} · ${st || "?"}`;
     rows.push(sysRow(label,
-      st === "active" ? "ok" : st ? "bad" : "", up ? `${name} · ${st || "?"}` : name, "",
+      st === "active" ? "ok" : st ? "bad" : "", up ? detail : name, "",
       up ? h("button", { class: "small ghost", onclick: async () => {
         if (await confirmBox(`Restart ${name} on the rover?\n(sudo systemctl restart; needs the sudo rule from make setup-dash)`, "Restart")) act("/api/service", { name, action: "restart" }, `Restarting ${name}`);
       } }, "Restart") : null));
   }
   $("#sysBody").replaceChildren(...rows);
+}
+
+// ------------------------------------------------------------------ build
+// `pixi run build` (colcon build --symlink-install over ros2_ws/src) in one or both dev
+// containers. The commands come from the server (POST /api/build with preview), so they show the
+// exact flags, e.g. the Jetson's low-RAM --executor sequential.
+let BUILD = { cmds: {}, err: "" };
+function buildBody() {
+  return { packages: $("#buildPkgs").value.trim(), deps: $("#buildDeps").checked };
+}
+function renderBuild() {
+  $$("[data-build]").forEach((b) => {
+    b.hidden = !CAT.ground && b.dataset.build !== "rover";
+    b.onclick = () => buildAction(b.dataset.build);
+  });
+  $("#buildPkgs").value = store.get("buildPkgs", "");
+  $("#buildDeps").checked = store.get("buildDeps", false);
+  $("#buildPkgs").oninput = (e) => { store.set("buildPkgs", e.target.value); scheduleBuildPreview(); };
+  $("#buildDeps").onchange = (e) => { store.set("buildDeps", e.target.checked); scheduleBuildPreview(); };
+  buildPreview();
+}
+let buildT = null;
+function scheduleBuildPreview() { clearTimeout(buildT); buildT = setTimeout(buildPreview, 250); }
+async function buildPreview() {
+  try { BUILD = { cmds: (await api("/api/build", { side: "both", ...buildBody(), preview: true })).commands, err: "" }; }
+  catch (e) { BUILD = { cmds: {}, err: e.message }; }
+  $("#buildPkgs").classList.toggle("bad", !!BUILD.err);
+  updateBuild();
+}
+const BUILD_DOT = { running: "busy", starting: "busy", stopping: "busy", exited: "ok", failed: "bad", stopped: "" };
+function updateBuild() {
+  const box = $("#buildCmds");
+  if (!box) return;
+  if (BUILD.err) { box.replaceChildren(h("div", { class: "err", text: BUILD.err })); return; }
+  const procs = allProcs();
+  box.replaceChildren(...Object.entries(BUILD.cmds).map(([side, cmd]) => {
+    const p = procs.filter((q) => q.side === side && q.id === "build").pop();
+    const when = p && p.ended ? " · " + new Date(p.ended * 1000).toLocaleTimeString() : "";
+    const st = !p ? "" : ALIVE.has(p.state) ? "building…" : p.state === "exited" ? `done${when}`
+      : `${p.state}${p.rc != null ? " · exit " + p.rc : ""}${when}`;
+    return h("div", { class: "build-cmd", title: p ? p.label : "" },
+      h("span", { class: "dot " + (p ? BUILD_DOT[p.state] || "" : "") }),
+      h("span", {}, h("span", { class: "w", text: side === "rover" ? "Rover · l4t" : "Ground · x86" }),
+        st ? h("span", { class: "st", text: " · " + st }) : null),
+      h("code", { text: cmd }));
+  }));
+}
+async function buildAction(side) {
+  const job = STATE && STATE.job;
+  if (job && JOB_ACTIVE.has(job.state) && !await confirmBox(`${job.title} is ${job.state}.\n\n` +
+    "Building now replaces files its nodes use (run the mode again afterwards to load them), and on the " +
+    "Jetson it competes with them for RAM. Build anyway?", "Build")) return;
+  try {
+    await api("/api/build", { side, ...buildBody() });
+    toast(`Building on ${side === "both" ? "both machines" : side === "rover" ? "the rover" : "the ground station"}`);
+    openDrawer(true); setTab(side === "both" ? "all" : side);
+    pollState();
+  } catch (e) { toast(e.message, true); }
 }
 
 // ------------------------------------------------------------------ CAN
@@ -763,7 +839,7 @@ async function pollState() {
   try {
     STATE = await api("/api/state");
     renderHeader(); renderSystems(); updateModeBadges(); updateJobUI(); renderProcs();
-    updateStateMachine();
+    updateStateMachine(); updateBuild();
   } catch (e) {
     $("#pills").replaceChildren(pill("Dashboard server unreachable", "bad", e.message));
   } finally { stateBusy = false; }
@@ -776,7 +852,7 @@ async function boot() {
     catch { await new Promise((r) => setTimeout(r, 1500)); }
   }
   if (!modeById(selected)) selected = CAT.modes[0].id;
-  renderQuick(); renderModes(); renderStateMachine(); renderPanel(); renderCan();
+  renderQuick(); renderModes(); renderStateMachine(); renderPanel(); renderCan(); renderBuild();
   await pollState();
   setInterval(pollState, 1500);
   setInterval(padTick, 50);

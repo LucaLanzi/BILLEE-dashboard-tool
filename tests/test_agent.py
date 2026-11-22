@@ -97,6 +97,102 @@ class TestAgent(unittest.TestCase):
         srv.shutdown()
 
 
+class TestDevcontainerCli(unittest.TestCase):
+    def setUp(self):
+        self.old_state, self.old_path = agent.STATE_DIR, os.environ["PATH"]
+        agent.STATE_DIR = tempfile.mkdtemp()
+        os.environ["PATH"] = "/usr/bin:/bin"  # no devcontainer, no node
+
+    def tearDown(self):
+        agent.STATE_DIR, os.environ["PATH"] = self.old_state, self.old_path
+
+    def fake_cli(self):
+        """tools/node (a script that prints its arguments) + tools/.../devcontainer.js."""
+        tools = os.path.join(agent.STATE_DIR, "tools")
+        js = os.path.join(tools, "node_modules", "@devcontainers", "cli", "devcontainer.js")
+        node = os.path.join(tools, "node", "bin", "node")
+        for path, body in ((js, ""), (node, '#!/bin/sh\necho "ARGS $*"\n')):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(body)
+        os.chmod(node, 0o755)
+        return node, js
+
+    def repo(self):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, ".devcontainer"))
+        with open(os.path.join(d, ".devcontainer", "devcontainer.json"), "w") as f:
+            f.write('{"remoteUser": "ros_user"}')
+        return d
+
+    def test_finds_the_cli(self):
+        self.assertIsNone(agent.devcontainer_cli())
+        node, js = self.fake_cli()
+        self.assertEqual(agent.devcontainer_cli(), [node, js])
+
+    def test_rebuild_needs_the_cli(self):
+        a = agent.Agent()
+        p = a.container({"key": "rover", "repo": self.repo()}).rebuild()
+        self.assertEqual((p["id"], p["tag"]), ("container-rover", "container"))
+        self.assertEqual(wait_state(a, p["id"], {"failed"})["rc"], 1)
+        self.assertTrue(any("devcontainer CLI" in t for t in text(a, p["id"])))
+
+    def test_rebuild_runs_devcontainer_up(self):
+        node, js = self.fake_cli()
+        repo = self.repo()
+        a = agent.Agent()
+        dc = a.container({"key": "ground", "repo": repo})
+        dc.find = lambda: None  # no docker needed
+        p = dc.rebuild()
+        with self.assertRaises(RuntimeError):  # Start and Rebuild share one id: one at a time
+            dc.start()
+        wait_state(a, p["id"], {"exited"})
+        args = next(t for t in text(a, p["id"]) if t.startswith("ARGS "))
+        self.assertEqual(args.split()[1:], [
+            js, "up", "--workspace-folder", os.path.realpath(repo), "--config",
+            os.path.join(os.path.realpath(repo), ".devcontainer/devcontainer.json"),
+            "--remove-existing-container"])
+
+    @unittest.skipUnless(os.path.isdir("/run/systemd/system"), "needs systemd")
+    def test_missing_service_is_not_found(self):
+        self.assertEqual(agent.Agent().service("billee-no-such-unit-xyz", "status")["active"],
+                         "not-found")
+
+
+class TestCommanderBuild(unittest.TestCase):
+    def commander(self):
+        from billee_dash import commander
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump({"dashboard": {"state_dir": tempfile.mkdtemp()},
+                       "ground": {"mode": "container", "repo": tempfile.mkdtemp()}}, f)
+        cfg = commander.load_config(f.name)
+        os.unlink(f.name)
+        return commander, commander.Commander(cfg)
+
+    def test_build_preview(self):
+        _, c = self.commander()
+        out = c.build({"side": "both", "packages": "teleop", "deps": True, "preview": True})
+        self.assertEqual(out["commands"], {
+            "rover": "pixi run -e l4t build --parallel-workers 2 --executor sequential "
+                     "--packages-up-to teleop",
+            "ground": "pixi run -e default build --packages-up-to teleop"})
+        with self.assertRaises(ValueError):
+            c.build({"side": "moon", "preview": True})
+        c.ground_enabled = False
+        self.assertEqual(list(c.build({"side": "both", "preview": True})["commands"]), ["rover"])
+
+    def test_no_rebuild_while_a_mode_runs(self):
+        commander, c = self.commander()
+        c.job = {"title": "Teleop · Drive", "state": "running"}
+        with self.assertRaises(commander.ClientError):
+            c.rebuild_container("rover")
+
+    def test_gds_services(self):
+        from billee_dash import commander
+        self.assertEqual(commander.load_config()["rover"]["services"],
+                         ["billee-lan-gds", "billee-scm-lan-gds"])
+
+
 class TestLinks(unittest.TestCase):
     def test_links_follow_the_rover_ip(self):
         from billee_dash import commander

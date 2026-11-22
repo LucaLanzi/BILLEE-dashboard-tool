@@ -12,7 +12,8 @@ The agent:
   - keeps the last lines of every process's output in a ring buffer that the commander
     long-polls, so a dropped radio link loses no output and stops nothing;
   - finds a dev container by the labels VS Code / the devcontainer CLI put on it, starts it and
-    runs its postStartCommand, like "Reopen in Container" does;
+    runs its postStartCommand, like "Reopen in Container" does, and rebuilds it with the
+    devcontainer CLI, like "Rebuild Container";
   - reports and restarts systemd services (the F' GDS units).
 
 Standard library only (Python 3.8+), one file, so it can run on any host as-is.
@@ -398,8 +399,14 @@ class Agent:
         if not re.fullmatch(r"[A-Za-z0-9@_.-]+", name or ""):
             raise ValueError("bad service name")
         if action == "status":
-            res = subprocess.run(["systemctl", "is-active", name], capture_output=True, text=True)
-            text = (res.stdout.strip() or res.stderr.strip() or "unknown").splitlines()[0]
+            # is-active says "inactive" for a unit that doesn't exist, too: tell the two apart.
+            res = subprocess.run(["systemctl", "show", "-p", "LoadState,ActiveState", name],
+                                 capture_output=True, text=True)
+            props = dict(l.split("=", 1) for l in res.stdout.splitlines() if "=" in l)
+            if props.get("LoadState") == "not-found":
+                return {"name": name, "active": "not-found"}
+            text = props.get("ActiveState") or \
+                (res.stderr.strip() or "unknown").splitlines()[0]
             return {"name": name, "active": text[:80]}
         if action not in ("start", "stop", "restart"):
             raise ValueError("action must be status|start|stop|restart")
@@ -533,10 +540,16 @@ class Devcontainer:
         return self.agent.task(f"start {self.key} dev container", self._start_task,
                                proc_id=f"container-{self.key}", tag="container")
 
-    def _run_logged(self, log, argv, cwd=None):
+    def rebuild(self):
+        """Like VS Code's Rebuild Container: remove the container, build the image again
+        (Docker's cache keeps the slow layers, e.g. OpenPose) and create a new container."""
+        return self.agent.task(f"rebuild {self.key} dev container", self._rebuild_task,
+                               proc_id=f"container-{self.key}", tag="container")
+
+    def _run_logged(self, log, argv, cwd=None, env=None):
         log("$ " + _show(argv))
         p = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             stdin=subprocess.DEVNULL)
+                             stdin=subprocess.DEVNULL, env=env)
         for raw in iter(p.stdout.readline, b""):
             log(raw.decode("utf-8", "replace").rstrip("\r\n"))
         return p.wait()
@@ -571,15 +584,14 @@ class Devcontainer:
             if rc != 0:
                 log(f"initializeCommand exited {rc}; continuing")
         if info is None:
-            cli = shutil_which("devcontainer") or os.path.join(STATE_DIR, "tools", "node_modules", ".bin", "devcontainer")
-            if not os.path.exists(cli):
+            if devcontainer_cli() is None:
                 log(f"ERROR: no dev container for {self.config_rel} in {self.repo} yet, and the "
-                    "devcontainer CLI isn't installed. Open the repo in VS Code once (Dev Containers: "
-                    "Reopen in Container), or run `make setup-dash` to install the CLI.")
+                    f"devcontainer CLI isn't installed on {socket.gethostname()}. Open the repo in VS "
+                    "Code once (Dev Containers: Reopen in Container), or run `make setup-dash` to "
+                    "install the CLI.")
                 return 1
             log("no container yet: creating it with the devcontainer CLI (the first build can take a while)")
-            return self._run_logged(log, [cli, "up", "--workspace-folder", self.repo,
-                                          "--config", self.config_path])
+            return self._cli_up(log)
         log(f"starting {self.key} container {info['name']} ({info['id'][:12]})")
         rc = self._run_logged(log, ["docker", "start", info["id"]])
         if rc != 0:
@@ -596,6 +608,51 @@ class Devcontainer:
         log(f"{self.key} container is up")
         return 0
 
+    def _cli_up(self, log, rebuild=False):
+        """devcontainer up: builds the image (cached), creates the container and runs its
+        lifecycle commands (onCreate ... postStart), as VS Code does."""
+        cli = devcontainer_cli()
+        argv = cli + ["up", "--workspace-folder", self.repo, "--config", self.config_path]
+        if rebuild:
+            argv.append("--remove-existing-container")
+        env = dict(os.environ)
+        if os.path.isabs(cli[0]):  # the CLI's own node, for anything it starts with `node`
+            env["PATH"] = os.path.dirname(cli[0]) + os.pathsep + env.get("PATH", "")
+        if not env.get("DISPLAY") and "xhost" in " ".join(self._lifecycle("initializeCommand")):
+            log("note: no DISPLAY here, so initializeCommand (xhost) may fail")
+        rc = self._run_logged(log, argv, cwd=self.repo, env=env)
+        self._config, self._ws_cache = None, None  # a new container; maybe a changed config
+        return rc
+
+    def _rebuild_task(self, log):
+        if not os.path.isdir(self.repo):
+            log(f"ERROR: {self.repo} does not exist on {socket.gethostname()}")
+            return 1
+        if devcontainer_cli() is None:
+            log(f"ERROR: rebuilding needs the devcontainer CLI (and Node 20+) on "
+                f"{socket.gethostname()}: run `make setup-dash` on the ground station (step 6 "
+                "installs it here). Or rebuild in VS Code: Dev Containers: Rebuild Container.")
+            return 1
+        self._config = None  # read devcontainer.json again: it may have changed since
+        info = self.find()
+        if info and info["state"] == "running":
+            # Ctrl-C what the dashboard runs in there first (ROS nodes shut down cleanly), then
+            # the CLI removes the container.
+            log(f"stopping the processes in {info['name']}: {self.stop_ros()}")
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline and self.agent_procs_alive():
+                time.sleep(0.5)
+        log(f"rebuilding the {self.key} dev container from {self.config_rel} (the image build "
+            "uses Docker's cache; a changed early layer takes longer)")
+        rc = self._cli_up(log, rebuild=True)
+        log(f"{self.key} container rebuilt" if rc == 0 else f"devcontainer up exited {rc}")
+        return rc
+
+    def agent_procs_alive(self):
+        with self.agent.lock:
+            return [p for p in self.agent.procs.values()
+                    if p.alive and p.kind == "container" and p.container == self.key]
+
     def stop_ros(self):
         """Ctrl-C every process the agent started in this container, even if the agent that
         started it is gone (pidfiles in the container's /tmp)."""
@@ -607,6 +664,20 @@ class Devcontainer:
         res = subprocess.run(["docker", "exec", info["id"], "bash", "-c", script],
                              capture_output=True, text=True, timeout=20)
         return res.stdout.strip() or "nothing to stop"
+
+
+def devcontainer_cli():
+    """argv that runs the devcontainer CLI here, or None. `make setup-dash` puts it (and, on the
+    rover, a Node to run it) in ~/.billee-dash/tools; a CLI on PATH works too."""
+    tools = os.path.join(STATE_DIR, "tools")
+    js = os.path.join(tools, "node_modules", "@devcontainers", "cli", "devcontainer.js")
+    if os.path.isfile(js):
+        node = os.path.join(tools, "node", "bin", "node")
+        node = node if os.access(node, os.X_OK) else shutil_which("node")
+        if node:
+            return [node, js]
+    cli = shutil_which("devcontainer")
+    return [cli] if cli else None
 
 
 def shutil_which(name):
@@ -677,6 +748,8 @@ def make_handler(agent, token):
                     return self._send(200, {"stopped": agent.stop_all()})
                 if path == "/api/container/start":
                     return self._send(200, agent.container(body["container"]).start())
+                if path == "/api/container/rebuild":
+                    return self._send(200, agent.container(body["container"]).rebuild())
                 if path == "/api/container/stop_ros":
                     return self._send(200, {"result": agent.container(body["container"]).stop_ros()})
                 if path == "/api/service":

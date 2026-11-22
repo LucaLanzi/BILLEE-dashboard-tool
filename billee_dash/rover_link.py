@@ -58,6 +58,12 @@ class LocalClient:
         except RuntimeError as e:
             raise ClientError(str(e))
 
+    def container_rebuild(self, spec):
+        try:
+            return self.agent.container(spec).rebuild()
+        except RuntimeError as e:
+            raise ClientError(str(e))
+
     def container_stop_ros(self, spec):
         return self.agent.container(spec).stop_ros()
 
@@ -110,6 +116,9 @@ class RemoteClient:
 
     def container_start(self, spec):
         return self._call("POST", "/api/container/start", {"container": spec})
+
+    def container_rebuild(self, spec):
+        return self._call("POST", "/api/container/rebuild", {"container": spec})
 
     def container_stop_ros(self, spec):
         return self._call("POST", "/api/container/stop_ros", {"container": spec}, 30)["result"]

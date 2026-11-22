@@ -8,7 +8,8 @@ rover's, over SSH (rover_link.py). The page talks only to this server:
     GET  /api/logs?since=&wait=  output of every process on both machines (long poll)
     POST /api/mode/preview|start|stop
     POST /api/can                CAN tools on the rover host
-    POST /api/container          start a dev container / Ctrl-C everything in it
+    POST /api/container          start / rebuild a dev container, or Ctrl-C everything in it
+    POST /api/build              pixi run build in one or both dev containers (preview: the commands)
     POST /api/proc/stop          stop one process
     POST /api/service            systemd services on the rover (the F' GDS units)
     POST /api/open               open a link (GDS, Foxglove) on this machine
@@ -225,6 +226,7 @@ class Commander:
         self.joy = JoyLink(self.rover_link)
         self.job = None
         self.job_lock = threading.Lock()
+        self.building = set()  # sides whose build is waiting for its container
         self.cache = {"rover": None, "ground": None, "links": {}, "updated": 0}
         self.nodes = can_nodes(cfg["ground"]["repo"])
 
@@ -387,7 +389,7 @@ class Commander:
             time.sleep(0.5)
         return None
 
-    def ensure_container(self, side, timeout=900):
+    def ensure_container(self, side, timeout=900, cancellable=True):
         client = self.client(side)
         st = client.status([self.container_spec(side)])["containers"][side]
         if st.get("state") == "running":
@@ -396,7 +398,7 @@ class Commander:
             return False, st.get("error", st["state"])
         self.note(f"{side} container is {st.get('state')}: starting it")
         p = client.container_start(self.container_spec(side))
-        done = self.wait_proc(side, p["id"], timeout)
+        done = self.wait_proc(side, p["id"], timeout, cancellable)
         if not done:
             return False, "timed out (or cancelled) starting the container"
         return done["rc"] == 0, f"exit {done['rc']}"
@@ -410,6 +412,59 @@ class Commander:
         buttons = [1 if b else 0 for b in body["buttons"]][:32]
         self.joy.send(axes, buttons)
         return {"ok": True}
+
+    def build(self, body):
+        """POST /api/build: `pixi run build` in the rover's and/or the ground's dev container,
+        starting the container first if needed. preview: only return the commands."""
+        side = body.get("side")
+        sides = {"rover": ["rover"], "ground": ["ground"], "both": ["rover", "ground"]}.get(side)
+        if sides is None:
+            raise ValueError("side must be rover, ground or both")
+        if not self.ground_enabled:
+            if side == "ground":
+                raise ValueError("this machine has no ground-station container")
+            sides = ["rover"]
+        steps, cmds = {}, {}
+        for s in sides:
+            steps[s] = modes.build_step(body.get("packages", ""), bool(body.get("deps")),
+                                        self.cfg[s].get("build_args", ""))
+            c = self.cfg[s]
+            pixi = c.get("pixi_run", "pixi run -e {env}").format(env=c["pixi_env"])
+            cmds[s] = f"{pixi} {steps[s]['cmd']}"
+        if body.get("preview"):
+            return {"commands": cmds}
+        with self.job_lock:  # one build per container; the agent refuses a second one too
+            for s in sides:
+                if s in self.building or any(
+                        p["id"] == "build" and p["state"] in ("starting", "running", "stopping")
+                        for p in self.client(s).procs()):
+                    raise ClientError(f"the {s} build is already running")
+            self.building.update(sides)
+        for s in sides:
+            threading.Thread(target=self._build, args=(s, steps[s]), daemon=True).start()
+        return {"commands": cmds, "started": sides}
+
+    def _build(self, side, step):
+        try:
+            ok, msg = self.ensure_container(side, cancellable=False)
+            if not ok:
+                self.note(f"{side} build not started: the container isn't up ({msg})", stream="err")
+                return
+            self.note(f"{side}: {step['label']}")
+            self.run_step(side, step, tag="build")
+        except (ClientError, ConnectionError) as e:
+            self.note(f"{side} build not started: {e}", stream="err")
+        finally:
+            self.building.discard(side)
+
+    def rebuild_container(self, side):
+        """Rebuild Container, from the page. Not while a mode runs: it removes the container."""
+        job = self.job
+        if job and job["state"] in ("starting", "running", "degraded", "stopping"):
+            raise ClientError(f"{job['title']} is {job['state']}: stop it first (a rebuild "
+                              f"removes the {side} container)")
+        self.note(f"rebuilding the {side} dev container")
+        return self.client(side).container_rebuild(self.container_spec(side))
 
     def can_action(self, body):
         step = modes.can_command(body.get("action"), body.get("iface", "can2"),
@@ -561,7 +616,11 @@ class Commander:
         if "error" in rover or \
                 (rover.get("containers") or {}).get("rover", {}).get("state") != "running":
             return
-        p = next((q for q in rover.get("procs", []) if q["id"] == modes.IDLE_LIGHT["id"]), None)
+        procs = rover.get("procs", [])
+        if any(q["id"] == "container-rover" and q["state"] in ("starting", "running")
+               for q in procs):
+            return  # the container is being started or rebuilt
+        p = next((q for q in procs if q["id"] == modes.IDLE_LIGHT["id"]), None)
         if p and p["state"] in ("starting", "running", "stopping"):
             return
         if p and p["state"] == "failed" and time.time() - (p.get("ended") or 0) < self.IDLE_RETRY_S:
@@ -700,6 +759,7 @@ class Commander:
         cat["hosts"] = {"rover": cfg["rover"].get("host"), "ground": cfg["ground"].get("host"),
                         "rover_user": cfg["rover"].get("user")}
         cat["services"] = cfg["rover"].get("services", [])
+        cat["devcontainers"] = {s: cfg[s]["devcontainer"] for s in ("rover", "ground")}
         cat["can_nodes"] = self.nodes
         cat["can_default_iface"] = cfg.get("can", {}).get("iface", "can2")
         cat["can_default_bitrate"] = cfg.get("can", {}).get("bitrate", 500000)
@@ -801,9 +861,13 @@ def make_handler(cmd):
                     spec = cmd.container_spec(side)
                     if action == "start":
                         return self._send(200, cmd.client(side).container_start(spec))
+                    if action == "rebuild":
+                        return self._send(200, cmd.rebuild_container(side))
                     if action == "stop_ros":
                         return self._send(200, {"result": cmd.client(side).container_stop_ros(spec)})
-                    raise ValueError("action must be start or stop_ros")
+                    raise ValueError("action must be start, rebuild or stop_ros")
+                if path == "/api/build":
+                    return self._send(200, cmd.build(body))
                 if path == "/api/proc/stop":
                     side = body.get("side")
                     if side not in ("rover", "ground"):

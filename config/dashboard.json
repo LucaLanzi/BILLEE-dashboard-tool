@@ -17,7 +17,8 @@
     "pixi_run": "pixi run -e {env}",
     "agent_port": 8770,
     "joy_relay_port": 8771,
-    "services": ["billee-rcm-lan-gds", "billee-scm-lan-gds"]
+    "services": ["billee-lan-gds", "billee-scm-lan-gds"],
+    "build_args": "--parallel-workers 2 --executor sequential"
   },
   "ground": {
     "mode": "auto",
@@ -26,7 +27,8 @@
     "devcontainer": ".devcontainer/devcontainer.json",
     "container_name": "",
     "pixi_env": "default",
-    "pixi_run": "pixi run -e {env}"
+    "pixi_run": "pixi run -e {env}",
+    "build_args": ""
   },
   "links": {
     "rcm_gds": "http://{rover}:5000",

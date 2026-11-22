@@ -179,6 +179,18 @@ class TestModes(unittest.TestCase):
             with self.assertRaises(modes.OptionError):
                 modes.can_command(*bad)
 
+    def test_build_step(self):
+        b = modes.build_step
+        self.assertEqual(b()["cmd"], "build")
+        self.assertEqual(b("teleop", build_args="--parallel-workers 2 --executor sequential")["cmd"],
+                         "build --parallel-workers 2 --executor sequential --packages-select teleop")
+        step = b("teleop, chassis_bringup teleop", deps=True)
+        self.assertEqual(step["cmd"], "build --packages-up-to teleop chassis_bringup")
+        self.assertEqual((step["id"], step["where"], step["ros"]), ("build", "container", True))
+        for bad in ("teleop;reboot", "$(id)", "a/b", "-x", "../src"):
+            with self.assertRaises(modes.OptionError):
+                b(bad)
+
 
 if __name__ == "__main__":
     unittest.main()

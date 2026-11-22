@@ -60,6 +60,21 @@
       <h3>Systems</h3>
       <div id="sysBody"></div>
     </div>
+    <div class="card" id="build">
+      <h3>Build · pixi run build</h3>
+      <label class="field">Packages
+        <input id="buildPkgs" spellcheck="false" autocomplete="off" placeholder="all of ros2_ws/src"
+               title="Names separated by spaces or commas. Empty builds the whole workspace.">
+      </label>
+      <label class="check" title="--packages-up-to instead of --packages-select">
+        <input type="checkbox" id="buildDeps"> with their dependencies</label>
+      <div class="btn-row">
+        <button data-build="rover">Rover</button>
+        <button data-build="ground">Ground</button>
+        <button data-build="both">Both</button>
+      </div>
+      <div class="build-cmds" id="buildCmds"></div>
+    </div>
     <div class="card" id="can">
       <h3>CAN · drivetrain</h3>
       <div class="can-row">
