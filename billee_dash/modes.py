@@ -144,10 +144,11 @@ OPTIONS = {
                 "up first, tooling/can-up brings it up too (1 Mbit/s for can3).",
     },
     "arm_jog": {
-        "label": "Arm jog teleop", "side": "ground", "type": "bool", "basic": True,
+        "label": "Arm jog teleop", "side": "rover", "type": "bool", "basic": True,
         "default": False,
-        "help": "ros2 launch arm_bringup arm_teleop.launch.py joy:=false on the ground station, "
-                "reading the same gamepad.",
+        "help": "ros2 launch arm_bringup arm_teleop.launch.py joy:=false on the rover, next to "
+                "the arm driver, reading the same gamepad (/joy from wherever Gamepad on puts "
+                "it). Hold LT to jog, B / X to pick the joint.",
     },
     # Ground-station sim
     "gui": {
@@ -440,7 +441,9 @@ def build(mode_id, values, cfg=None, ground=True):
                 "id": "mode-arm", "label": "arm.launch.py", "where": "container", "ros": True,
                 "cmd": cmd})
         if o["arm_jog"]:
-            plan["ground"].append({
+            # On the rover: the teleop reads arm_axes.yaml and talks to the arm's /arm topics,
+            # so it must match the rover's arm_bringup, not whatever the ground station has.
+            plan["rover"].append({
                 "id": "mode-arm-jog", "label": "arm_teleop.launch.py", "where": "container",
                 "ros": True, "cmd": "ros2 launch arm_bringup arm_teleop.launch.py joy:=false"})
 

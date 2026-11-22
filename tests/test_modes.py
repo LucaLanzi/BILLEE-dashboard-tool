@@ -64,7 +64,9 @@ class TestModes(unittest.TestCase):
     def test_arm(self):
         _, rover, ground, _ = cmds("teleop-arm", arm_hw=True, arm_jog=True)
         self.assertEqual(rover[1], "ros2 launch arm_bringup arm.launch.py")
-        self.assertEqual(ground[1], "ros2 launch arm_bringup arm_teleop.launch.py joy:=false")
+        # The jog teleop runs on the rover, next to the arm driver and its arm_axes.yaml.
+        self.assertEqual(rover[2], "ros2 launch arm_bringup arm_teleop.launch.py joy:=false")
+        self.assertFalse([c for c in ground if "arm_teleop" in c])
         pre, _, _, _ = cmds("teleop-arm", arm_hw=True)
         self.assertEqual(pre, ["tooling/can-up can2", "tooling/can-clear-faults --iface can2",
                                "tooling/can-up can3"])
