@@ -71,6 +71,13 @@ class TestModes(unittest.TestCase):
         self.assertEqual(pre, ["tooling/can-up can2", "tooling/can-clear-faults --iface can2",
                                "tooling/can-up can3"])
 
+    def test_arm_defaults_on(self):
+        # Teleop · Arm with nothing ticked: arm bus up, arm driver and jog teleop on the rover.
+        pre, rover, ground, _ = cmds("teleop-arm")
+        self.assertIn("tooling/can-up can3", pre)
+        self.assertIn("ros2 launch arm_bringup arm.launch.py", rover)
+        self.assertIn("ros2 launch arm_bringup arm_teleop.launch.py joy:=false", rover)
+
     def test_arm_can_interface(self):
         pre, rover, _, _ = cmds("teleop-arm", arm_hw=True, arm_can_interface="can4")
         self.assertIn("tooling/can-up can4", pre)

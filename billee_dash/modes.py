@@ -133,7 +133,7 @@ OPTIONS = {
     # Teleop-Arm
     "arm_hw": {
         "label": "Arm hardware (arm.launch.py)", "side": "rover", "type": "bool", "basic": True,
-        "default": False,
+        "default": True,
         "help": "ros2 launch arm_bringup arm.launch.py on the rover (the P17/P20 drives over "
                 "CAN, the RoboClaws over UART).",
     },
@@ -145,7 +145,7 @@ OPTIONS = {
     },
     "arm_jog": {
         "label": "Arm jog teleop", "side": "rover", "type": "bool", "basic": True,
-        "default": False,
+        "default": True,
         "help": "ros2 launch arm_bringup arm_teleop.launch.py joy:=false on the rover, next to "
                 "the arm driver, reading the same gamepad (/joy from wherever Gamepad on puts "
                 "it). Hold LT to jog, B / X to pick the joint.",
