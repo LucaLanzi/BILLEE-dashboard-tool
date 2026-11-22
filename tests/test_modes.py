@@ -78,6 +78,16 @@ class TestModes(unittest.TestCase):
         self.assertIn("ros2 launch arm_bringup arm.launch.py", rover)
         self.assertIn("ros2 launch arm_bringup arm_teleop.launch.py joy:=false", rover)
 
+    def test_arm_deadzone(self):
+        _, rover, _, _ = cmds("teleop-arm")
+        self.assertIn("ros2 launch arm_bringup arm_teleop.launch.py joy:=false", rover)
+        _, rover, _, _ = cmds("teleop-arm", arm_deadzone=0.25)
+        self.assertIn("ros2 launch arm_bringup arm_teleop.launch.py joy:=false deadzone:=0.25", rover)
+        with self.assertRaises(modes.OptionError):
+            modes.build("teleop-arm", {"arm_deadzone": 0.9})
+        with self.assertRaises(modes.OptionError):
+            modes.build("teleop-arm", {"arm_deadzone": "0.2; rm"})
+
     def test_arm_can_interface(self):
         pre, rover, _, _ = cmds("teleop-arm", arm_hw=True, arm_can_interface="can4")
         self.assertIn("tooling/can-up can4", pre)

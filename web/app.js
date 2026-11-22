@@ -278,6 +278,15 @@ function control(key, mode) {
       spec.choices.map(([val, label]) => h("option", { value: val, selected: val === v, text: label })));
     return s;
   }
+  if (spec.type === "range") {
+    const shown = h("output", { class: "range-val", text: Number(v).toFixed(2) });
+    const r = h("input", {
+      type: "range", min: spec.min, max: spec.max, step: spec.step || "any", value: v,
+      "aria-label": spec.label,
+      oninput: (e) => { shown.textContent = Number(e.target.value).toFixed(2); set(Number(e.target.value)); },
+    });
+    return h("div", { class: "range" }, r, shown);
+  }
   if (spec.type === "bool") {
     const id = `opt-${mode.id}-${key}`;
     return h("label", { class: "toggle", for: id },
