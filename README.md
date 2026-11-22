@@ -147,7 +147,7 @@ app.foxglove.dev (`foxglove.open_with`). The layout for every mode is billee-sof
 
 ## Gamepad
 
-**Gamepad on** picks where the controller is read. Hold **LB** to drive in every case
+**Gamepad on** picks where the controller is read. Hold **RT** (right trigger) to drive and **LT** to jog the arm in every case
 (`teleop/config/joystick.yaml`):
 
 | Setting | Reads it | Use when |
@@ -158,7 +158,7 @@ app.foxglove.dev (`foxglove.open_with`). The layout for every mode is billee-sof
 
 **This browser** streams the pad's state at 20 Hz through the dashboard's SSH tunnel to
 [`joy_relay.py`](billee_dash/joy_relay.py) on the rover. The relay publishes `/joy` for the usual
-`joy_tank_drive`. The mode card shows the pad, both sticks and LB live. Press any button once
+`joy_tank_drive`. The mode card shows the pad, both sticks and the LT / RT deadmen live. Press any button once
 after plugging it in: browsers only show a gamepad after that.
 
 It stops on its own:

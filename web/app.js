@@ -828,7 +828,9 @@ function renderPad() {
   box.hidden = !shown;
   if (!shown) return;
   const st = PAD.state;
-  const lb = st && st.buttons[4];
+  // Deadmen: RT (axis 5) drives, LT (axis 2) jogs the arm; held below -0.5 like the teleops.
+  const lt = st && st.axes[2] < -0.5;
+  const rt = st && st.axes[5] < -0.5;
   const bar = (v) => h("span", { class: "bar" }, h("i", { style: `height:${Math.round(Math.abs(v) * 100)}%;${v < 0 ? "top:50%" : "bottom:50%"}` }));
   const live = PAD.sending && Date.now() - PAD.lastOk < 500;
   box.replaceChildren(
@@ -838,7 +840,8 @@ function renderPad() {
       : !want ? "sends to the rover while the mode runs"
       : PAD.error ? PAD.error : document.hidden ? "tab hidden: not sending" : live ? "sending" : "connecting…" }),
     st ? h("span", { class: "sticks" }, bar(st.axes[1] / 2), bar(st.axes[4] / 2),
-      h("span", { class: "lb" + (lb ? " on" : ""), text: "LB" })) : null);
+      h("span", { class: "lb" + (lt ? " on" : ""), text: "LT" }),
+      h("span", { class: "lb" + (rt ? " on" : ""), text: "RT" })) : null);
 }
 window.addEventListener("gamepadconnected", padTick);
 window.addEventListener("gamepaddisconnected", padTick);
