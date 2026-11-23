@@ -66,7 +66,7 @@ before **Run**. The commands are the ones in billee-software-2027's `docs/runnin
 | Mode | Rover | Ground station | Opens |
 |---|---|---|---|
 | **Teleop · Drive** | `can-up` → `can-clear-faults` → `rover.launch.py mode:=real camera:=cloud` (ZED video + point cloud) | `ground_station.launch.py use_sim_time:=false view:=cloud` | Foxglove |
-| **Teleop · Arm** | Drive, + `arm_bringup arm.launch.py` (option) | Drive, + `arm_teleop.launch.py joy:=false` (option) | Foxglove |
+| **Teleop · Arm** | Drive (real or sim), + `arm_bringup arm.launch.py` (real, mock or off) + `arm_teleop.launch.py joy:=false` (option), + the arm's TF (`arm_tf:=`) | Drive's | Foxglove |
 | **Teleop · Science** | Drive without the ZED 2i (`camera:=none`) | `view:=drivetrain` | Foxglove, Science GDS |
 | Autonomous | TODO | | |
 | **Astronaut** | hotspot up → astronaut server → stream watcher, + Drive (option) | Drive's (option) | Astronaut page, Foxglove |
@@ -90,6 +90,30 @@ shell syntax.
 2. the CAN or astronaut steps (a failed `can-up` or hotspot stops the run);
 3. the rover launch, then 5 s later the ground launch;
 4. the links.
+
+### Teleop · Arm: real or sim
+
+**Drivetrain** picks the real ODESCs or Gazebo on the Jetson, and **Arm** picks what drives the arm.
+Each combination works:
+
+| Drivetrain | Arm | Runs on the rover |
+|---|---|---|
+| Real | Real (default) | `can-up can2` + `can3`, `rover.launch.py mode:=real arm_tf:=arm`, `arm.launch.py`, the jog teleop |
+| Sim | Mock | `rover.launch.py mode:=sim arm_tf:=arm` in Gazebo, `arm.launch.py can_interface:=mock roboclaw_port:=mock`, the jog teleop: no CAN, and jogging moves the arm model and the RealSense on it |
+| Sim | Off | `rover.launch.py mode:=sim arm_tf:=zero`: the arm model with every joint at 0, e.g. a RealSense on a testbed Jetson |
+| Sim | Real | `can-up can3` only, the real arm next to the simulated drivetrain |
+
+**Arm TF** (Advanced) is `rover.launch.py arm_tf:=`, the arm's URDF with the RealSense on its end
+effector, which places the ArUco markers and the keyboard relative to `base_link`
+(billee-software-2027's `docs/arm-camera.md`). **Follow the arm** (default) means `arm` when
+`arm.launch.py` runs (real or mock) and `zero` when it's off. **Joints held at 0** is refused next to
+an arm driver, because both would publish `/arm/joint_states`. The arm RealSense starts whenever one
+is plugged in (**Arm RealSense**), in either drivetrain mode, with the ArUco and keyboard nodes.
+
+Foxglove opens on the rover's bridge in both modes. `rover_dashboard.json` has the arm panels: the
+camera feed with the keyboard's keys drawn over it, and a 3D view of the arm, the markers and the
+keyboard. With a real RealSense in sim, the arm camera and the arm's TF run on the wall clock and
+the drivetrain on Gazebo's, so follow `base_link` in Foxglove's 3D panel, not `odom`.
 
 ### Mode light
 

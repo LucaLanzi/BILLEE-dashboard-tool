@@ -101,6 +101,47 @@ class TestModes(unittest.TestCase):
         with self.assertRaises(modes.OptionError):
             modes.build("teleop-arm", {"arm_hw": True, "arm_can_interface": "can3; rm"})
 
+    def test_arm_sim_and_real(self):
+        # Real drivetrain, real arm (the default): the arm's TF follows /arm/joint_states.
+        pre, rover, _, _ = cmds("teleop-arm")
+        self.assertTrue(rover[0].startswith("ros2 launch chassis_bringup rover.launch.py "
+                                            "mode:=real camera:=cloud"))
+        self.assertIn("arm_tf:=arm", rover[0])
+        # Sim drivetrain (Gazebo on the Jetson), mock arm: no CAN at all, the mock arm drives TF.
+        pre, rover, _, _ = cmds("teleop-arm", drivetrain="sim", arm_hw="mock")
+        self.assertEqual(pre, [])
+        self.assertTrue(rover[0].startswith("xvfb-run -a vglrun -d egl ros2 launch "
+                                            "chassis_bringup rover.launch.py mode:=sim"))
+        self.assertIn("arm_tf:=arm", rover[0])
+        self.assertIn("ros2 launch arm_bringup arm.launch.py can_interface:=mock "
+                      "roboclaw_port:=mock", rover)
+        self.assertIn("ros2 launch arm_bringup arm_teleop.launch.py joy:=false", rover)
+        # Sim, no arm (a RealSense on a testbed): joints held at 0, no arm driver.
+        pre, rover, _, _ = cmds("teleop-arm", drivetrain="sim", arm_hw="off", arm_jog=False)
+        self.assertEqual(pre, [])
+        self.assertIn("arm_tf:=zero", rover[0])
+        self.assertEqual(len(rover), 1)
+        # Sim drivetrain with the real arm: only the arm's bus comes up.
+        pre, rover, _, _ = cmds("teleop-arm", drivetrain="sim", arm_hw="real")
+        self.assertEqual(pre, ["tooling/can-up can3"])
+        self.assertIn("arm_tf:=arm", rover[0])
+        # Joints at 0 next to an arm driver would be two /arm/joint_states publishers.
+        with self.assertRaises(modes.OptionError):
+            modes.build("teleop-arm", {"arm_hw": "mock", "arm_tf": "zero"})
+        _, rover, _, _ = cmds("teleop-arm", arm_tf="false")
+        self.assertIn("arm_tf:=false", rover[0])
+        with self.assertRaises(modes.OptionError):
+            modes.build("teleop-arm", {"arm_hw": "maybe"})
+        # Other modes leave arm_tf to rover.launch.py.
+        _, rover, _, _ = cmds("teleop-drive")
+        self.assertNotIn("arm_tf", rover[0])
+
+    def test_arm_hw_saved_as_bool(self):
+        # Values saved when arm_hw was a checkbox still work.
+        self.assertEqual(modes.build("teleop-arm", {"arm_hw": True})["options"]["arm_hw"], "real")
+        self.assertEqual(modes.build("teleop-arm", {"arm_hw": "false"})["options"]["arm_hw"],
+                         "off")
+
     def test_bench_and_sim(self):
         pre, rover, ground, _ = cmds("bench", bench_rviz=False)
         self.assertEqual(rover, ["ros2 launch chassis_bringup onboard_test.launch.py rviz:=false"])

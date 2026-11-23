@@ -132,10 +132,26 @@ OPTIONS = {
     },
     # Teleop-Arm
     "arm_hw": {
-        "label": "Arm hardware (arm.launch.py)", "side": "rover", "type": "bool", "basic": True,
-        "default": True,
-        "help": "ros2 launch arm_bringup arm.launch.py on the rover (the P17/P20 drives over "
-                "CAN, the RoboClaws over UART).",
+        "label": "Arm (arm.launch.py)", "side": "rover", "type": "select", "basic": True,
+        "choices": [["real", "Real (P17/P20 on CAN, RoboClaws)"],
+                    ["mock", "Mock (no arm hardware)"], ["off", "Off"]],
+        "default": "real",
+        "help": "ros2 launch arm_bringup arm.launch.py on the rover. Real: the P17/P20 drives "
+                "over CAN and the RoboClaws over USB. Mock: can_interface:=mock "
+                "roboclaw_port:=mock, the same controllers on simulated joints, so the jog "
+                "teleop moves the arm model (and the RealSense on it) in Foxglove: a testbed "
+                "Jetson or the sim. Off: no arm driver.",
+    },
+    "arm_tf": {
+        "label": "Arm TF (camera on the rover)", "side": "rover", "type": "select",
+        "choices": [["auto", "Follow the arm"], ["arm", "Arm joint angles"],
+                    ["zero", "Joints held at 0"], ["false", "Off"]],
+        "default": "auto",
+        "help": "rover.launch.py arm_tf:=: the arm's URDF with the RealSense on it, so ArUco "
+                "markers and the keyboard are placed relative to base_link. Follow the arm: "
+                "the joint angles from arm.launch.py when it runs (real or mock), every joint "
+                "at 0 when it's off (a RealSense on a testbed). Joints held at 0 must not run "
+                "with arm.launch.py: both would publish /arm/joint_states.",
     },
     "arm_deadzone": {
         "label": "Arm stick deadzone", "side": "rover", "type": "range", "default": 0.1,
@@ -207,7 +223,8 @@ MODES = [
     {
         "id": "teleop-arm", "group": "mission", "title": "Teleop · Arm", "short": "Arm",
         "summary": "Teleop · Drive plus the arm. Xbox mode toggle (drive / arm)",
-        "options": ["arm_hw", "arm_can_interface", "arm_jog", "arm_deadzone"] + DRIVE_OPTIONS,
+        "options": ["arm_hw", "arm_can_interface", "arm_jog", "arm_deadzone", "arm_tf"]
+                   + DRIVE_OPTIONS,
         "defaults": {"camera": "cloud"},
         "links": ["foxglove"],
         "todo": "Xbox drive/arm toggle and motion planning are not built yet.",
@@ -273,6 +290,9 @@ def validate(mode, values):
             continue  # options of another mode: ignore
         spec = OPTIONS[key]
         kind = spec["type"]
+        if key == "arm_hw" and str(raw).lower() in ("true", "false"):
+            # saved (page, API) when arm_hw was a checkbox, before real / mock / off
+            raw = "real" if str(raw).lower() == "true" else "off"
         if kind == "bool":
             if isinstance(raw, str):
                 raw = raw.lower() in ("1", "true", "yes", "on")
@@ -332,6 +352,13 @@ def joy_steps(port=JOY_RELAY_PORT):
     ]
 
 
+def arm_tf_arg(o):
+    """rover.launch.py arm_tf:= for Teleop · Arm: who publishes /arm/joint_states."""
+    if o.get("arm_tf", "auto") != "auto":
+        return o["arm_tf"]
+    return "zero" if o.get("arm_hw", "real") == "off" else "arm"
+
+
 def _drive(plan, o, real, iface, cfg, light=None):
     """rover.launch.py + ground_station.launch.py (+ the browser-gamepad relay)."""
     args = [f"mode:={o['drivetrain']}"]
@@ -350,6 +377,8 @@ def _drive(plan, o, real, iface, cfg, light=None):
             args.append("odom_tf:=false")
     if o["arm_camera"] != LAUNCH_DEFAULTS["arm_camera"]:
         args.append(f"arm_camera:={o['arm_camera']}")
+    if "arm_tf" in o:  # Teleop · Arm: always explicit (rover.launch.py's auto can't see the arm)
+        args.append(f"arm_tf:={arm_tf_arg(o)}")
     if o["gamepad"] == "rover":
         args.append("joy_control:=true")
     if light:
@@ -433,7 +462,10 @@ def build(mode_id, values, cfg=None, ground=True):
     elif light:  # no rover.launch.py to carry it (Astronaut without driving)
         plan["rover"].append(light_step(light))
     if mode_id == "teleop-arm":
-        if o["arm_hw"]:
+        if o["arm_tf"] == "zero" and o["arm_hw"] != "off":
+            raise OptionError("Arm TF: Joints held at 0 can't run with the arm driver (both "
+                              "publish /arm/joint_states). Use Follow the arm, or Arm: Off")
+        if o["arm_hw"] == "real":
             arm_iface = o.get("arm_can_interface", "can3")
             if arm_iface == iface:
                 raise OptionError(f"Arm CAN interface: {arm_iface} is the drivetrain's bus; "
@@ -444,6 +476,9 @@ def build(mode_id, values, cfg=None, ground=True):
             cmd = "ros2 launch arm_bringup arm.launch.py"
             if arm_iface != "can3":
                 cmd += f" can_interface:={arm_iface}"
+        elif o["arm_hw"] == "mock":
+            cmd = "ros2 launch arm_bringup arm.launch.py can_interface:=mock roboclaw_port:=mock"
+        if o["arm_hw"] != "off":
             plan["rover"].append({
                 "id": "mode-arm", "label": "arm.launch.py", "where": "container", "ros": True,
                 "cmd": cmd})
