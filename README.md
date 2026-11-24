@@ -79,6 +79,8 @@ The settings cover every argument in `running.md`:
   (`camera:=none|video|cloud|both|openpose`). The video shows the skeletons when OpenPose runs;
 - **gamepad:** where it's read ([below](#gamepad));
 - **CAN:** `can_interface`, `fault_policy`, `gear_ratio`, `vio`, `odom_tf`, `arm_camera`;
+- **ArUco marker sizes:** the printed markers' sizes in mm (`marker_size:=`, `marker_sizes:=`,
+  [below](#aruco-marker-sizes));
 - **ground station:** the RViz `view`, `fixed_frame`, RViz and Foxglove-bridge toggles;
 - **extra:** free `name:=value` arguments for either side.
 
@@ -114,6 +116,23 @@ Foxglove opens on the rover's bridge in both modes. `rover_dashboard.json` has t
 camera feed with the keyboard's keys drawn over it, and a 3D view of the arm, the markers and the
 keyboard. With a real RealSense in sim, the arm camera and the arm's TF run on the wall clock and
 the drivetrain on Gazebo's, so follow `base_link` in Foxglove's 3D panel, not `odom`.
+
+#### ArUco marker sizes
+
+**ArUco marker sizes (mm)** (Advanced, every mode with the arm RealSense) sets the printed side of
+the markers' black square, as measured with a ruler, without editing the rover's config files:
+
+| Value | Passes to `rover.launch.py` | Means |
+|---|---|---|
+| *(empty, default)* | nothing | the rover's `config/aruco.yaml` and `keyboard_layout.yaml`: 50 mm, keyboard markers 10-13 30 mm |
+| `40` | `marker_size:=0.04` | every marker without a size of its own is 40 mm |
+| `10-13:40` | `marker_sizes:=10-13:0.04` | markers 10 to 13 (the keyboard's) are 40 mm |
+| `50 10-13:30, 7:100` | `marker_size:=0.05 marker_sizes:=10-13:0.03,7:0.1` | both; `id:mm` and `first-last:mm` entries, spaces or commas |
+
+The per-id sizes reach both the ArUco node and the keyboard node, which fits the keyboard with the
+same sizes; ids not named keep the size their config gives them. Sizes are 5-1000 mm, ids 0-999.
+A wrong size moves the markers' PnP distance and gets the keyboard fit rejected ("reprojection
+error" in `keyboard_node`'s status line).
 
 ### Mode light
 

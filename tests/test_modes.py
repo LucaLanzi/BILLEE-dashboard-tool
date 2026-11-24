@@ -157,6 +157,25 @@ class TestModes(unittest.TestCase):
             with self.assertRaises(modes.OptionError):
                 modes.build(m, {})
 
+    def test_aruco_sizes(self):
+        # Empty: the rover's config files decide, nothing is passed.
+        _, rover, _, _ = cmds("teleop-arm", arm_hw="off")
+        self.assertNotIn("marker_size", rover[0])
+        _, rover, _, _ = cmds("teleop-arm", arm_hw="off", aruco_sizes="40")
+        self.assertIn(" marker_size:=0.04", rover[0])
+        self.assertNotIn("marker_sizes", rover[0])
+        _, rover, _, _ = cmds("teleop-arm", arm_hw="off", aruco_sizes=" 10-13:30, 7:100  45.5")
+        self.assertIn(" marker_size:=0.0455 marker_sizes:=10-13:0.03,7:0.1", rover[0])
+        plan = modes.build("teleop-drive", {"aruco_sizes": "10-13:30,7:100"})
+        self.assertEqual(plan["options"]["aruco_sizes"], "10-13:30 7:100")  # normalised
+        # The arm camera off: no sizes for it.
+        _, rover, _, _ = cmds("teleop-drive", arm_camera="false", aruco_sizes="40")
+        self.assertNotIn("marker_size", rover[0])
+        for bad in ("40 50", "13-10:30", "10:2", "10:5000", "1000:30", "10:30;rm", "a:30",
+                    "10-13", "10:30:40", "$(id)"):
+            with self.assertRaises(modes.OptionError, msg=bad):
+                modes.build("teleop-arm", {"arm_hw": "off", "aruco_sizes": bad})
+
     def test_injection_refused(self):
         for bad in ({"can_interface": "can2; reboot"}, {"rover_extra": "a:=$(id)"},
                     {"ground_extra": "x:=1 && rm"}, {"camera": "cloud;"}, {"gear_ratio": "1e9"},

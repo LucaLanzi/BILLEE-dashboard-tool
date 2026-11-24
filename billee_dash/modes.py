@@ -78,6 +78,15 @@ OPTIONS = {
         "choices": [["auto", "If plugged in"], ["true", "Always"], ["false", "Never"]],
         "default": "auto", "help": "rover.launch.py arm_camera:=.",
     },
+    "aruco_sizes": {
+        "label": "ArUco marker sizes (mm)", "side": "rover", "type": "text", "default": "",
+        "pattern": r"(?:{t}(?:[\s,]+{t})*)?".format(t=r"(?:\d{1,4}(?:-\d{1,4})?:)?\d+(?:\.\d+)?"),
+        "placeholder": "50 10-13:30",
+        "help": "Printed side of the markers' black square, in mm, as measured. A number = every "
+                "marker (rover.launch.py marker_size:=); id:mm or first-last:mm = those ids "
+                "(marker_sizes:=), e.g. 10-13:40 for the keyboard's four. The ArUco and keyboard "
+                "nodes both use them. Empty = the rover's config: 50 mm, keyboard 10-13 30 mm.",
+    },
     "rover_extra": {
         "label": "Extra rover args", "side": "rover", "type": "args", "default": "",
         "placeholder": "name:=value ...", "help": "Appended to the rover launch.",
@@ -193,8 +202,9 @@ OPTIONS = {
 }
 
 DRIVE_OPTIONS = ["drivetrain", "camera", "gamepad", "can_up", "clear_faults", "can_interface",
-                 "fault_policy", "vio", "odom_tf", "gear_ratio", "arm_camera", "status_light",
-                 "rover_extra", "view", "rviz", "ground_foxglove", "fixed_frame", "ground_extra"]
+                 "fault_policy", "vio", "odom_tf", "gear_ratio", "arm_camera", "aruco_sizes",
+                 "status_light", "rover_extra", "view", "rviz", "ground_foxglove", "fixed_frame",
+                 "ground_extra"]
 
 # The blink(1) mode light per state (status_light package in billee-software-2027): Teleop modes
 # solid blue, Autonomous and Astronaut solid red. Idle (yellow pulse) is the dashboard's
@@ -314,6 +324,9 @@ def validate(mode, values):
             text = str(raw).strip()
             if not re.fullmatch(spec["pattern"], text):
                 raise OptionError(f"{spec['label']}: '{text}' is not valid (e.g. {spec['placeholder']})")
+            if key == "aruco_sizes":
+                text = " ".join(text.replace(",", " ").split())
+                parse_aruco_sizes(text)  # ranges and sizes, beyond what the pattern checks
             out[key] = text
         elif kind == "args":
             text = " ".join(str(raw).split())
@@ -352,6 +365,51 @@ def joy_steps(port=JOY_RELAY_PORT):
     ]
 
 
+ARUCO_MM = (5.0, 1000.0)  # a marker's printed side the arm camera can plausibly use, mm
+ARUCO_MAX_ID = 999        # DICT_*_1000 has ids 0-999
+
+
+def parse_aruco_sizes(text):
+    """"50 10-13:30" -> (50.0, [(10, 13, 30.0)]): the size of every marker (or None) and the
+    sizes of id ranges, in mm. Raises OptionError."""
+    label = OPTIONS["aruco_sizes"]["label"]
+    default, ranges = None, []
+    for token in str(text or "").replace(",", " ").split():
+        ids, _, mm = token.rpartition(":")
+        try:
+            mm = float(mm)
+            first, _, last = ids.partition("-")
+            first, last = (int(first), int(last or first)) if ids else (None, None)
+        except ValueError:
+            raise OptionError(f"{label}: '{token}' is not mm, id:mm or first-last:mm")
+        if not ARUCO_MM[0] <= mm <= ARUCO_MM[1]:
+            raise OptionError(f"{label}: {token}: {mm:g} mm is out of range "
+                              f"({ARUCO_MM[0]:g}-{ARUCO_MM[1]:g} mm)")
+        if first is None:
+            if default is not None:
+                raise OptionError(f"{label}: one size for every marker ({default:g} and "
+                                  f"{mm:g}); give the others as id:mm")
+            default = mm
+        elif not 0 <= first <= last <= ARUCO_MAX_ID:
+            raise OptionError(f"{label}: {token}: ids are 0-{ARUCO_MAX_ID}, first <= last")
+        else:
+            ranges.append((first, last, mm))
+    return default, ranges
+
+
+def aruco_size_args(text):
+    """rover.launch.py marker_size:= (m) and marker_sizes:= ("10-13:0.03,7:0.1") for the arm
+    camera's ArUco and keyboard nodes; [] = the rover's config files."""
+    default, ranges = parse_aruco_sizes(text)
+    args = []
+    if default is not None:
+        args.append(f"marker_size:={default / 1000:g}")
+    if ranges:
+        items = [(f"{a}" if a == b else f"{a}-{b}") + f":{mm / 1000:g}" for a, b, mm in ranges]
+        args.append("marker_sizes:=" + ",".join(items))
+    return args
+
+
 def arm_tf_arg(o):
     """rover.launch.py arm_tf:= for Teleop · Arm: who publishes /arm/joint_states."""
     if o.get("arm_tf", "auto") != "auto":
@@ -377,6 +435,8 @@ def _drive(plan, o, real, iface, cfg, light=None):
             args.append("odom_tf:=false")
     if o["arm_camera"] != LAUNCH_DEFAULTS["arm_camera"]:
         args.append(f"arm_camera:={o['arm_camera']}")
+    if o["arm_camera"] != "false":
+        args += aruco_size_args(o.get("aruco_sizes", ""))
     if "arm_tf" in o:  # Teleop · Arm: always explicit (rover.launch.py's auto can't see the arm)
         args.append(f"arm_tf:={arm_tf_arg(o)}")
     if o["gamepad"] == "rover":
