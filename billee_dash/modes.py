@@ -45,81 +45,164 @@ OPTIONS = {
     },
     "can_up": {
         "label": "Bring CAN up first", "side": "rover", "type": "bool", "default": True,
-        "help": "tooling/can-up <iface> on the Jetson host before launching (real drivetrain).",
+        "help": ("Before launching, switches on the drivetrain's CAN bus on the Jetson "
+                 "(tooling/can-up <CAN interface>) at the wheel motor controllers' bitrate "
+                 "(500 kbit/s on can2). Without it the rover can't talk to the ODESC boards "
+                 "and the drivetrain won't start.\n\n"
+                 "Leave it on. It does nothing if the bus is already up, and nothing with the "
+                 "Sim drivetrain (no CAN). In Teleop · Arm with a real arm it also brings up "
+                 "the arm's bus (1 Mbit/s)."),
     },
     "clear_faults": {
         "label": "Clear ODESC faults first", "side": "rover", "type": "bool", "default": True,
-        "help": "tooling/can-clear-faults on the Jetson host after CAN is up (real drivetrain).",
+        "help": ("After CAN is up, sends every wheel's ODESC motor controller a Clear Errors "
+                 "command (tooling/can-clear-faults). A wheel that faulted last time "
+                 "(over-current, lost heartbeat...) stays faulted and won't drive until its "
+                 "error is cleared.\n\n"
+                 "It only clears error bits: it doesn't arm or move a motor. An error that "
+                 "comes straight back (e.g. brake resistor disarmed) needs the board "
+                 "rebooted: the CAN panel's Clear + reboot stuck. Real drivetrain only."),
     },
     "can_interface": {
         "label": "CAN interface", "side": "rover", "type": "text", "default": "can2",
         "pattern": r"v?can[0-9]{1,2}", "placeholder": "can2",
-        "help": "The drivetrain's bus: can2 (tooling/can-pin keeps the drivetrain dongle there).",
+        "help": ("The Linux CAN interface the drivetrain's ODESC boards are on "
+                 "(rover.launch.py can_interface:=). Normally can2: tooling/can-pin pins the "
+                 "drivetrain's USB-CAN adapter to that name by its serial number, so it can't "
+                 "swap with the arm's (can3).\n\n"
+                 "vcan0 = a virtual bus, to test without motors (with the ODESC emulator). "
+                 "Real drivetrain only."),
     },
     "fault_policy": {
         "label": "Wheel fault policy", "side": "rover", "type": "select",
         "choices": [["warn", "Warn, keep driving"], ["fault", "Stop the drivetrain"]],
-        "default": "warn", "help": "rover.launch.py fault_policy:= (real drivetrain).",
+        "default": "warn",
+        "help": ("What the drivetrain does when a wheel goes unhealthy: its ODESC stops "
+                 "sending heartbeats (unplugged, no power), reports an axis error, or drops "
+                 "out of closed-loop control.\n\n"
+                 "Warn, keep driving (default): log it and keep going on the healthy wheels; "
+                 "easiest for testing. Stop the drivetrain: stop every wheel, so a failed one "
+                 "isn't dragged along; safer on a course. rover.launch.py fault_policy:=. "
+                 "Real drivetrain only."),
     },
     "vio": {
         "label": "ZED VIO + EKF", "side": "rover", "type": "bool", "default": False,
-        "help": "rover.launch.py vio:=true: the EKF publishes odom (real drivetrain).",
+        "help": ("Tracks the rover's position with the ZED 2i's visual-inertial odometry "
+                 "(camera + IMU) as well as the wheels: an EKF fuses the two and publishes "
+                 "the odom frame, steadier than the wheels alone when they slip.\n\n"
+                 "Needs the ZED plugged into the Jetson. Turns Wheel-odometry TF off, since "
+                 "only one source may publish odom. Real drivetrain only: the sim runs its "
+                 "own estimator. rover.launch.py vio:=true."),
     },
     "odom_tf": {
         "label": "Wheel-odometry TF", "side": "rover", "type": "bool", "default": True,
-        "help": "rover.launch.py odom_tf:= (forced off by VIO).",
+        "help": ("Publishes the rover's position from wheel odometry as the odom -> "
+                 "base_footprint transform. RViz and Foxglove use odom as the fixed \"world\" "
+                 "frame: with this off and nothing else publishing odom, the 3D views can't "
+                 "place the rover.\n\n"
+                 "Leave it on. ZED VIO + EKF turns it off, because its EKF publishes odom "
+                 "instead. rover.launch.py odom_tf:=. Real drivetrain only."),
     },
     "gear_ratio": {
         "label": "Gear ratio", "side": "rover", "type": "number", "default": 48.0,
-        "min": 1, "max": 500, "help": "rover.launch.py gear_ratio:= (motor turns per wheel turn).",
+        "min": 1, "max": 500,
+        "help": ("Motor turns per wheel turn (48 on BILLEE's gearboxes). The drivetrain uses "
+                 "it to turn wheel speeds into motor speeds, and motor encoder counts back "
+                 "into distance travelled.\n\n"
+                 "Change it only if the gearboxes change: a wrong value makes the rover drive "
+                 "faster or slower than commanded, and its odometry wrong by the same factor. "
+                 "rover.launch.py gear_ratio:=. Real drivetrain only."),
     },
     "arm_camera": {
         "label": "Arm RealSense", "side": "rover", "type": "select",
         "choices": [["auto", "If plugged in"], ["true", "Always"], ["false", "Never"]],
-        "default": "auto", "help": "rover.launch.py arm_camera:=.",
+        "default": "auto",
+        "help": ("The Intel RealSense D435i on the arm's end effector, with ArUco marker and "
+                 "keyboard detection (topics /arm_cam/...).\n\n"
+                 "If plugged in (default): start it when a RealSense is on USB at launch. "
+                 "Always: start it anyway; the driver waits and connects when the camera is "
+                 "plugged in. Never: don't start it, which saves CPU and USB bandwidth. "
+                 "rover.launch.py arm_camera:=."),
     },
     "aruco_sizes": {
         "label": "ArUco marker sizes (mm)", "side": "rover", "type": "text", "default": "",
         "pattern": r"(?:{t}(?:[\s,]+{t})*)?".format(t=r"(?:\d{1,4}(?:-\d{1,4})?:)?\d+(?:\.\d+)?"),
         "placeholder": "50 10-13:30",
-        "help": "Printed side of the markers' black square, in mm, as measured. A number = every "
-                "marker (rover.launch.py marker_size:=); id:mm or first-last:mm = those ids "
-                "(marker_sizes:=), e.g. 10-13:40 for the keyboard's four. The ArUco and keyboard "
-                "nodes both use them. Empty = the rover's config: 50 mm, keyboard 10-13 30 mm.",
+        "help": ("The printed size of the ArUco markers, in mm: the side of the black square "
+                 "measured with a ruler, without the white border. The camera needs it for a "
+                 "marker's orientation, and for its distance when depth isn't available. A "
+                 "wrong size gives wrong distances, and the keyboard fit is rejected.\n\n"
+                 "A number sets every marker (40). id:mm or first-last:mm sets some ids "
+                 "(10-13:30, the keyboard's four markers). Combine them with spaces: 50 "
+                 "10-13:30.\n\n"
+                 "Empty (default) = the rover's config files: 50 mm, keyboard markers 10-13 "
+                 "30 mm. rover.launch.py marker_size:= / marker_sizes:=."),
     },
     "rover_extra": {
         "label": "Extra rover args", "side": "rover", "type": "args", "default": "",
-        "placeholder": "name:=value ...", "help": "Appended to the rover launch.",
+        "placeholder": "name:=value ...",
+        "help": ("Extra name:=value arguments added to the end of the rover's launch command "
+                 "(ros2 launch chassis_bringup rover.launch.py ...), for a launch argument "
+                 "this page has no setting for.\n\n"
+                 "Separate them with spaces. Letters, digits and . , : / + @ % = - _ only. "
+                 "Open Commands below to see the full command."),
     },
     "view": {
         "label": "RViz layout", "side": "ground", "type": "select",
         "choices": [["auto", "Match the ZED"], ["drivetrain", "Drivetrain"], ["video", "Video"],
                     ["cloud", "Point cloud"], ["openpose", "OpenPose"], ["both", "Both"]],
-        "default": "auto", "help": "ground_station.launch.py view:=.",
+        "default": "auto",
+        "help": ("Which RViz layout the ground station opens. Match the ZED (default) follows "
+                 "the ZED 2i setting: Drivetrain when it's Off or Video, Point cloud, "
+                 "OpenPose, or Both.\n\n"
+                 "Every layout shows the rover, the five cameras, the arm and its markers; "
+                 "they differ in the ZED displays (point cloud, skeletons). "
+                 "ground_station.launch.py view:=."),
     },
     "rviz": {
         "label": "RViz on the ground station", "side": "ground", "type": "bool", "default": True,
-        "help": "ground_station.launch.py rviz:=.",
+        "help": ("Opens RViz on the ground station (the x86 computer) with the RViz layout "
+                 "above.\n\n"
+                 "Turn it off to use only Foxglove, or to save the ground station's CPU and "
+                 "GPU. ground_station.launch.py rviz:=."),
     },
     "ground_foxglove": {
         "label": "Ground Foxglove bridge", "side": "ground", "type": "bool", "default": True,
-        "help": "ground_station.launch.py foxglove:= (ws://localhost:8765). The dashboard opens "
-                "Foxglove on the rover's bridge either way.",
+        "help": ("Also runs a Foxglove bridge on the ground station, at ws://localhost:8765. "
+                 "It serves the topics the ground station receives from the rover over ROS, "
+                 "for a Foxglove connected to this computer.\n\n"
+                 "The dashboard opens Foxglove on the rover's own bridge (ws://<rover>:8765) "
+                 "either way, so you only need this to connect to localhost. Off saves a "
+                 "little CPU. ground_station.launch.py foxglove:=."),
     },
     "fixed_frame": {
         "label": "Fixed frame", "side": "ground", "type": "select",
         "choices": [["odom", "odom"], ["base_link", "base_link (ride along)"]],
-        "default": "odom", "help": "ground_station.launch.py fixed_frame:=.",
+        "default": "odom",
+        "help": ("The frame RViz draws everything in. odom (default): the world stays still "
+                 "and the rover drives across the grid, so you see where it went. base_link "
+                 "(ride along): the view moves with the rover, which stays in the middle "
+                 "while the world slides past; handy to watch the arm and its camera up "
+                 "close.\n\n"
+                 "odom needs something publishing it: Wheel-odometry TF, ZED VIO + EKF, or "
+                 "the sim. ground_station.launch.py fixed_frame:=."),
     },
     "ground_extra": {
         "label": "Extra ground args", "side": "ground", "type": "args", "default": "",
-        "placeholder": "name:=value ...", "help": "Appended to the ground station launch.",
+        "placeholder": "name:=value ...",
+        "help": ("Extra name:=value arguments added to the end of the ground station's launch "
+                 "command (ros2 launch chassis_bringup ground_station.launch.py ...; "
+                 "sim_gz.launch.py in Sim · Ground station), for a launch argument this page "
+                 "has no setting for.\n\n"
+                 "Separate them with spaces. Letters, digits and . , : / + @ % = - _ only."),
     },
     "status_light": {
         "label": "Mode light (blink(1))", "side": "rover", "type": "bool", "default": True,
-        "help": "Show the mode on the rover's blink(1): solid blue in Teleop modes, solid red in "
-                "Autonomous / Astronaut (rover.launch.py status_light:=, package status_light). "
-                "While nothing runs, the dashboard shows Idle as a slow yellow pulse.",
+        "help": ("The blink(1) USB LED on the rover shows its mode to people nearby: solid "
+                 "blue in the Teleop modes, solid red in Autonomous and Astronaut. While "
+                 "nothing runs, the dashboard shows Idle as a slow yellow pulse.\n\n"
+                 "Turn it off if the LED isn't plugged in, or to leave it as it is. "
+                 "rover.launch.py status_light:= (package status_light)."),
     },
     # Astronaut
     "astro_drive": {
@@ -136,8 +219,12 @@ OPTIONS = {
     },
     "astro_stop": {
         "label": "Stop server + hotspot on Stop", "side": "rover", "type": "bool", "default": False,
-        "help": "Off: Stop leaves the astronaut server and hotspot running (they also start at "
-                "boot). On: Stop also stops astronaut-web, astronaut-mediamtx and the hotspot.",
+        "help": ("What the Stop button does to the astronaut setup on the Jetson.\n\n"
+                 "Off (default): Stop ends the rover launch but leaves the astronaut web "
+                 "server, the video server (MediaMTX) and the Wi-Fi hotspot running. They "
+                 "start at boot anyway, and the Pi stays connected. On: Stop also stops "
+                 "astronaut-web and astronaut-mediamtx and takes the hotspot down, e.g. when "
+                 "you're done with the astronaut stream."),
     },
     # Teleop-Arm
     "arm_hw": {
@@ -156,24 +243,37 @@ OPTIONS = {
         "choices": [["auto", "Follow the arm"], ["arm", "Arm joint angles"],
                     ["zero", "Joints held at 0"], ["false", "Off"]],
         "default": "auto",
-        "help": "rover.launch.py arm_tf:=: the arm's URDF with the RealSense on it, so ArUco "
-                "markers and the keyboard are placed relative to base_link. Follow the arm: "
-                "the joint angles from arm.launch.py when it runs (real or mock), every joint "
-                "at 0 when it's off (a RealSense on a testbed). Joints held at 0 must not run "
-                "with arm.launch.py: both would publish /arm/joint_states.",
+        "help": ("Places the arm, and the RealSense on its end effector, on the rover (the "
+                 "arm's URDF, rover.launch.py arm_tf:=). This is what lets ArUco markers and "
+                 "the keyboard be given relative to the rover, and the arm show up in "
+                 "Foxglove and RViz.\n\n"
+                 "Follow the arm (default): the arm's joint angles when Arm is Real or Mock, "
+                 "every joint at 0 when Arm is Off (e.g. a RealSense on a testbed). Arm joint "
+                 "angles: always from the arm driver. Joints held at 0: the arm frozen in its "
+                 "zero pose; not with an arm driver running, since both would publish "
+                 "/arm/joint_states. Off: no arm model; markers stay relative to the camera "
+                 "only."),
     },
     "arm_deadzone": {
         "label": "Arm stick deadzone", "side": "rover", "type": "range", "default": 0.1,
         "min": 0.0, "max": 0.5, "step": 0.01,
-        "help": "Stick travel ignored around centre by the arm jog (arm_teleop.launch.py "
-                "deadzone:=). Raise it if a joint creeps with the stick let go, lower it for "
-                "finer control. Live while running: ros2 param set /arm_joy_teleop deadzone 0.2",
+        "help": ("How far the stick can move from centre before the arm jog reacts, as a "
+                 "fraction of full travel (0.10 = the first 10 % is ignored). Sticks rarely "
+                 "rest exactly at centre, and without a deadzone a joint would creep with the "
+                 "stick let go.\n\n"
+                 "Raise it if a joint creeps, lower it for finer control. "
+                 "arm_teleop.launch.py deadzone:=. Change it live while running: ros2 param "
+                 "set /arm_joy_teleop deadzone 0.2"),
     },
     "arm_can_interface": {
         "label": "Arm CAN interface", "side": "rover", "type": "text", "default": "can3",
         "pattern": r"v?can[0-9]{1,2}", "placeholder": "can3",
-        "help": "The arm's bus: can3 (tooling/can-pin keeps the arm dongle there). With Bring CAN "
-                "up first, tooling/can-up brings it up too (1 Mbit/s for can3).",
+        "help": ("The CAN interface the arm's P17/P20 joint drives are on (arm.launch.py "
+                 "can_interface:=). Normally can3: tooling/can-pin pins the arm's USB-CAN "
+                 "adapter to that name by its serial number. It must differ from the "
+                 "drivetrain's (can2).\n\n"
+                 "With Bring CAN up first it's switched on too, at 1 Mbit/s. Only used with "
+                 "Arm: Real."),
     },
     "arm_jog": {
         "label": "Arm jog teleop", "side": "rover", "type": "bool", "basic": True,
@@ -189,15 +289,26 @@ OPTIONS = {
     },
     "navigation": {
         "label": "EKF + Nav2", "side": "ground", "type": "bool", "default": True,
-        "help": "sim_gz.launch.py navigation:=. Off saves CPU but removes odom.",
+        "help": ("Runs the sim's position estimate (a synthetic ZED VIO and an EKF) and "
+                 "Nav2's planner and controller. The EKF is the only source of the odom frame "
+                 "in the sim, so RViz and Foxglove need it to place the rover in the world.\n\n"
+                 "Turn it off only to save CPU when you just want to drive in Gazebo; the 3D "
+                 "views then have no odom frame. sim_gz.launch.py navigation:=."),
     },
     "odesc_shadow": {
         "label": "ODESC shadow on vcan0", "side": "ground", "type": "bool", "default": False,
-        "help": "sim_gz.launch.py odesc_shadow:=true (create vcan0 on the host first).",
+        "help": ("Also runs the real ODESC drivetrain driver against a virtual CAN bus "
+                 "(vcan0), fed the same drive commands as Gazebo. Gazebo still moves the "
+                 "rover; this exercises the CAN messages the real rover would send, to test "
+                 "the driver without motors.\n\n"
+                 "Create vcan0 on this computer first: tooling/can-up vcan0. sim_gz.launch.py "
+                 "odesc_shadow:=true."),
     },
     "bench_rviz": {
         "label": "RViz on the Jetson", "side": "rover", "type": "bool", "default": True,
-        "help": "onboard_test.launch.py rviz:= (needs a monitor on the Jetson).",
+        "help": ("Bench test: opens RViz on the Jetson itself, which needs a monitor plugged "
+                 "into the Jetson.\n\n"
+                 "Turn it off on a Jetson without a screen. onboard_test.launch.py rviz:=."),
     },
 }
 
