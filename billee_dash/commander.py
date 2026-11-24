@@ -342,10 +342,19 @@ class Commander:
             time.sleep(1.5)
 
     # ---- links
-    def foxglove_url(self, ws=None):
+    def foxglove_layout_id(self, layout="rover"):
+        """The Foxglove layoutId of a layout (modes.FOXGLOVE_LAYOUTS) from foxglove.layouts in the
+        config, or "" if it isn't set."""
+        return str((self.cfg.get("foxglove", {}).get("layouts") or {}).get(layout) or "").strip()
+
+    def foxglove_url(self, ws=None, layout="rover"):
         ws = ws or self.cfg["links"]["foxglove_ws"]
         how = self.cfg.get("foxglove", {}).get("open_with", "auto")
-        q = urllib.parse.urlencode({"ds": "foxglove-websocket", "ds.url": ws})
+        params = {"ds": "foxglove-websocket", "ds.url": ws}
+        layout_id = self.foxglove_layout_id(layout)
+        if layout_id:
+            params["layoutId"] = layout_id
+        q = urllib.parse.urlencode(params)
         desktop = f"foxglove://open?{q}"
         web = f"https://app.foxglove.dev/~/view?{q}"
         if how == "desktop":
@@ -367,19 +376,23 @@ class Commander:
         except (OSError, subprocess.TimeoutExpired):
             return False
 
-    def link_url(self, name):
+    def link_url(self, name, layout="rover"):
         links = self.cfg["links"]
         if name == "foxglove":
-            return self.foxglove_url()
+            return self.foxglove_url(layout=layout)
         if name == "foxglove_local":
-            return self.foxglove_url("ws://localhost:8765")
+            return self.foxglove_url("ws://localhost:8765", layout=layout)
         if name in links:
             return links[name]
         raise ValueError(f"unknown link {name!r}")
 
-    def open_link(self, name):
-        url = self.link_url(name)
+    def open_link(self, name, layout="rover"):
+        url = self.link_url(name, layout)
         self.note(f"opening {name}: {url}")
+        if name.startswith("foxglove") and not self.foxglove_layout_id(layout):
+            self.note(f"Foxglove layout {modes.FOXGLOVE_LAYOUTS[layout]} has no layoutId "
+                      f"(config foxglove.layouts.{layout}), so Foxglove keeps its last layout. "
+                      "README: Foxglove layouts.")
         if not open_url(url) and url.startswith("foxglove://"):
             url = url.replace("foxglove://open?", "https://app.foxglove.dev/~/view?")
             webbrowser.open_new_tab(url)
@@ -629,7 +642,7 @@ class Commander:
                 self._step(job, "Open links", "active")
                 for name in plan["links"]:
                     try:
-                        self.open_link(name)
+                        self.open_link(name, plan.get("foxglove_layout", "rover"))
                     except Exception as e:
                         self.note(f"could not open {name}: {e}", stream="err")
                 self._step(job, "Open links", "done")

@@ -381,7 +381,9 @@ async function preview() {
     for (const s of plan.rover) rows.push([where(s, "rover"), cmd(s)]);
     for (const s of plan.ground) rows.push([where(s, "ground"), cmd(s)]);
     for (const s of plan.post || []) rows.push(["on Stop · " + where(s, "rover"), cmd(s)]);
-    if (plan.links.length) rows.push(["opens", plan.links.map(linkName).join(" · ")]);
+    const layout = { rover: "rover.json", arm: "rover_arm.json" }[plan.foxglove_layout] || "rover.json";
+    const opens = (k) => linkName(k) + (k.startsWith("foxglove") ? ` · layout ${layout}` : "");
+    if (plan.links.length) rows.push(["opens", plan.links.map(opens).join(" · ")]);
     box.replaceChildren(...rows.map(([w, c]) => h("div", { class: "cmd" }, h("div", { class: "w", text: w }), h("code", { text: c }))));
     $("#runBtn").title = "";
   } catch (e) {

@@ -112,10 +112,14 @@ effector, which places the ArUco markers and the keyboard relative to `base_link
 an arm driver, because both would publish `/arm/joint_states`. The arm RealSense starts whenever one
 is plugged in (**Arm RealSense**), in either drivetrain mode, with the ArUco and keyboard nodes.
 
-Foxglove opens on the rover's bridge in both modes. `rover_dashboard.json` has the arm panels: the
-camera feed with the keyboard's keys drawn over it, and a 3D view of the arm, the markers and the
-keyboard. With a real RealSense in sim, the arm camera and the arm's TF run on the wall clock and
-the drivetrain on Gazebo's, so follow `base_link` in Foxglove's 3D panel, not `odom`.
+Foxglove opens on the rover's bridge in both modes, with the `rover_arm.json` layout
+([Foxglove layouts](#foxglove-layouts)): the camera feed with the keyboard's keys drawn over it,
+and the arm model with the RealSense on the rover, the ArUco markers and the keyboard in 3D. In
+sim, the arm's TF and the ArUco and keyboard nodes run on Gazebo's clock like the rest of the
+rover (the RealSense and the arm driver stay on the wall clock and are restamped), so the arm and
+the markers show in `odom` as well as `base_link`. The arm's TF needs `/arm/joint_states`: with
+**Arm** Mock or Real, `arm_bringup` must be built on the rover (`pixi run build --packages-up-to
+arm_bringup`), or the arm, the camera and the markers have nowhere to attach.
 
 #### ArUco marker sizes
 
@@ -184,9 +188,28 @@ Enter `192.168.4.97` and the dashboard opens:
 Run `make setup-dash` again to change the address; every link follows.
 
 Foxglove uses the desktop app if it's installed (a `foxglove://` link), otherwise
-app.foxglove.dev (`foxglove.open_with`). The layout for every mode is billee-software-2027's
-`ros2_ws/src/chassis_bringup/foxglove/rover_dashboard.json`: import it once
-(**Layouts → Import from file**) and Foxglove keeps it.
+app.foxglove.dev (`foxglove.open_with`).
+
+### Foxglove layouts
+
+There are two layouts, in billee-software-2027's `ros2_ws/src/chassis_bringup/foxglove/`, and the
+dashboard opens the one for the mode:
+
+| Layout | Opened by | Shows |
+|---|---|---|
+| `rover.json` | Teleop · Drive, Teleop · Science, Autonomous, Astronaut, Sim | the five CSI cameras, the ZED 2i, the GPS map, and the rover on its own in 3D |
+| `rover_arm.json` | Teleop · Arm | all of `rover.json`, plus the arm RealSense feed with the ArUco markers and the keyboard drawn over it, and the arm with the RealSense, the markers and the keyboard in 3D |
+
+Foxglove only selects a layout from a link by its **layoutId**, the ID of a layout saved in your
+Foxglove account; it can't open a file from a link. Once:
+1. In Foxglove, **Layouts → Import from file**: `rover.json`, then `rover_arm.json`.
+2. Copy each one's ID: in app.foxglove.dev, select the layout in the **Layouts** menu; the ID is
+   the `layoutId=` in the address bar.
+3. `make setup-dash` asks for both (or set `foxglove.layouts.rover` / `.arm` in
+   `config/local.json`).
+
+Until both are set, the links open Foxglove on its last layout and the dashboard's log says which
+ID is missing. The page's **opens** line shows the layout a mode will open.
 
 ## Gamepad
 

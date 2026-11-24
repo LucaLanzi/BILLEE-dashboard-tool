@@ -40,7 +40,11 @@
     "web_port": 8080
   },
   "foxglove": {
-    "open_with": "auto"
+    "open_with": "auto",
+    "layouts": {
+      "rover": "",
+      "arm": ""
+    }
   },
   "can": {
     "iface": "can2",

@@ -157,6 +157,15 @@ class TestModes(unittest.TestCase):
             with self.assertRaises(modes.OptionError):
                 modes.build(m, {})
 
+    def test_foxglove_layout_per_mode(self):
+        """Teleop · Arm opens rover_arm.json; every other mode the rover on its own."""
+        for mode_id in ("teleop-drive", "teleop-science", "astronaut", "sim-ground", "bench"):
+            values = {"arm_hw": "off"} if mode_id == "teleop-arm" else {}
+            self.assertEqual(modes.build(mode_id, values)["foxglove_layout"], "rover", mode_id)
+        self.assertEqual(modes.build("teleop-arm", {})["foxglove_layout"], "arm")
+        self.assertEqual(modes.MODE_BY_ID["autonomous"].get("foxglove_layout", "rover"), "rover")
+        self.assertEqual(set(modes.FOXGLOVE_LAYOUTS), {"rover", "arm"})
+
     def test_aruco_sizes(self):
         # Empty: the rover's config files decide, nothing is passed.
         _, rover, _, _ = cmds("teleop-arm", arm_hw="off")

@@ -19,6 +19,7 @@
 # Options (environment):
 #   ROVER_HOST=10.110.0.230 ROVER_USER=billee ROVER_REPO=~/billee-software-2027   (defaults)
 #   ROVER_HW_REPO=~/billee-hardware-2027
+#   FOXGLOVE_LAYOUT_ROVER=<id> FOXGLOVE_LAYOUT_ARM=<id>   Foxglove layoutIds (README "Foxglove layouts")
 #   YES=1            accept every default and every optional step, no questions
 #   SKIP_APT=1       don't install host packages
 #   SKIP_ROVER=1     don't touch the rover (no key copy, no checks, no sudo rule)
@@ -134,6 +135,30 @@ PYEOF
 ok "saved $local_cfg"
 ok "the dashboard opens http://$host:5000 (RCM GDS), http://$host:5001 (Science GDS),"
 ok "  ws://$host:8765 (Foxglove) and https://$host:8443 (astronaut)"
+
+# Foxglove layouts: rover.json (every mode) and rover_arm.json (Teleop · Arm), opened by their
+# Foxglove layoutId once imported (README "Foxglove layouts"). Enter keeps / skips.
+cur_fx_rover="$(read_cfg "['foxglove']['layouts']['rover']")"
+cur_fx_arm="$(read_cfg "['foxglove']['layouts']['arm']")"
+echo "  Foxglove layout IDs (Layouts menu in Foxglove, after importing the two files from"
+echo "  billee-software-2027/ros2_ws/src/chassis_bringup/foxglove/; Enter = keep / none):"
+fx_rover="${FOXGLOVE_LAYOUT_ROVER:-$(ask "layoutId of rover.json" "$cur_fx_rover")}"
+fx_arm="${FOXGLOVE_LAYOUT_ARM:-$(ask "layoutId of rover_arm.json" "$cur_fx_arm")}"
+python3 - "$local_cfg" "$fx_rover" "$fx_arm" <<'PYEOF'
+import json, sys
+path, rover, arm = sys.argv[1:]
+cfg = json.load(open(path))
+layouts = cfg.setdefault("foxglove", {}).setdefault("layouts", {})
+layouts.update({k: v.strip() for k, v in (("rover", rover), ("arm", arm))})
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+PYEOF
+if [[ -n "$fx_rover" && -n "$fx_arm" ]]; then
+  ok "Foxglove opens rover.json, or rover_arm.json in Teleop · Arm"
+else
+  warn "no Foxglove layoutId for $([[ -z "$fx_rover" ]] && echo "rover.json ")$([[ -z "$fx_arm" ]] && echo "rover_arm.json"): Foxglove keeps its last layout (README: Foxglove layouts)"
+fi
 target="$user@$host"
 
 if [[ -n "${SKIP_ROVER:-}" ]]; then

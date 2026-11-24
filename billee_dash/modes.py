@@ -236,7 +236,7 @@ MODES = [
         "options": ["arm_hw", "arm_can_interface", "arm_jog", "arm_deadzone", "arm_tf"]
                    + DRIVE_OPTIONS,
         "defaults": {"camera": "cloud"},
-        "links": ["foxglove"],
+        "links": ["foxglove"], "foxglove_layout": "arm",
         "todo": "Xbox drive/arm toggle and motion planning are not built yet.",
     },
     {
@@ -273,6 +273,12 @@ MODES = [
 ]
 
 MODE_BY_ID = {m["id"]: m for m in MODES}
+
+# The two Foxglove layouts (billee-software-2027 ros2_ws/src/chassis_bringup/foxglove/): the rover
+# on its own for every mode, the rover with the arm and its RealSense for Teleop · Arm (a mode's
+# "foxglove_layout"). The dashboard opens the one a mode names by its Foxglove layoutId
+# (config foxglove.layouts), once it's imported into Foxglove.
+FOXGLOVE_LAYOUTS = {"rover": "rover.json", "arm": "rover_arm.json"}
 
 ARGS_RE = re.compile(r"^(\s*[A-Za-z_][A-Za-z0-9_]*:=[A-Za-z0-9_.,:/+@%=-]+)*\s*$")
 LAUNCH_DEFAULTS = {  # rover.launch.py defaults: only differing values are passed
@@ -492,7 +498,8 @@ def build(mode_id, values, cfg=None, ground=True):
     if not ground and o.get("gamepad") == "ground":
         raise OptionError(f"Gamepad on: Ground station {NO_GROUND_MSG}. Pick This browser.")
     plan = {"mode": mode_id, "options": o, "pre": [], "rover": [], "ground": [], "post": [],
-            "links": list(mode.get("links", []))}
+            "links": list(mode.get("links", [])),
+            "foxglove_layout": mode.get("foxglove_layout", "rover")}
 
     real = o.get("drivetrain", "real") == "real"
     iface = o.get("can_interface", "can2")

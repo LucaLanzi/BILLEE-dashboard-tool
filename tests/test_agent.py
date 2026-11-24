@@ -181,6 +181,24 @@ class TestCommanderBuild(unittest.TestCase):
         c.ground_enabled = False
         self.assertEqual(list(c.build({"side": "both", "preview": True})["commands"]), ["rover"])
 
+    def test_foxglove_layouts(self):
+        """The Foxglove link carries the layoutId of the mode's layout once it's configured."""
+        from urllib.parse import parse_qs, urlparse
+        _, c = self.commander()
+        c.cfg["foxglove"]["open_with"] = "web"
+        q = parse_qs(urlparse(c.foxglove_url(layout="arm")).query)
+        self.assertNotIn("layoutId", q)  # not configured: Foxglove keeps its last layout
+        self.assertEqual(q["ds.url"], [c.cfg["links"]["foxglove_ws"]])
+        c.cfg["foxglove"]["layouts"] = {"rover": "lay_rover1", "arm": "lay_arm2"}
+        for layout, lid in (("rover", "lay_rover1"), ("arm", "lay_arm2")):
+            q = parse_qs(urlparse(c.link_url("foxglove", layout)).query)
+            self.assertEqual(q["layoutId"], [lid])
+        q = parse_qs(urlparse(c.link_url("foxglove_local", "rover")).query)
+        self.assertEqual((q["ds.url"], q["layoutId"]), (["ws://localhost:8765"], ["lay_rover1"]))
+        c.cfg["foxglove"]["open_with"] = "desktop"
+        self.assertTrue(c.foxglove_url(layout="arm").startswith("foxglove://open?"))
+        self.assertIn("layoutId=lay_arm2", c.foxglove_url(layout="arm"))
+
     def test_no_rebuild_while_a_mode_runs(self):
         commander, c = self.commander()
         c.job = {"title": "Teleop · Drive", "state": "running"}
