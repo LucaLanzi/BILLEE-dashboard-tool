@@ -556,6 +556,8 @@ def _drive(plan, o, real, iface, cfg, light=None):
         args += aruco_size_args(o.get("aruco_sizes", ""))
     if "arm_tf" in o:  # Teleop · Arm: always explicit (rover.launch.py's auto can't see the arm)
         args.append(f"arm_tf:={arm_tf_arg(o)}")
+    else:  # every other mode: no arm model, so the arm doesn't show in RViz / Foxglove
+        args.append("arm_tf:=false")
     if o["gamepad"] == "rover":
         args.append("joy_control:=true")
     if light:

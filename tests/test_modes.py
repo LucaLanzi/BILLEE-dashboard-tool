@@ -25,7 +25,7 @@ class TestModes(unittest.TestCase):
         pre, rover, ground, links = cmds("teleop-drive")
         self.assertEqual(pre, ["tooling/can-up can2", "tooling/can-clear-faults --iface can2"])
         self.assertEqual(rover, ["ros2 launch chassis_bringup rover.launch.py mode:=real camera:=cloud "
-                                 "status_light:=teleop"])
+                                 "arm_tf:=false status_light:=teleop"])
         self.assertEqual(ground, ["ros2 launch chassis_bringup ground_station.launch.py "
                                   "use_sim_time:=false view:=cloud"])
         self.assertEqual(links, ["foxglove"])
@@ -49,7 +49,8 @@ class TestModes(unittest.TestCase):
         pre, rover, ground, _ = cmds("teleop-drive", drivetrain="sim", camera="cloud")
         self.assertEqual(pre, [])  # no CAN for the sim
         self.assertEqual(rover[0], "xvfb-run -a vglrun -d egl ros2 launch chassis_bringup "
-                                   "rover.launch.py mode:=sim camera:=cloud status_light:=teleop")
+                                   "rover.launch.py mode:=sim camera:=cloud arm_tf:=false "
+                                   "status_light:=teleop")
         self.assertIn("use_sim_time:=true", ground[0])
 
     def test_real_options(self):
@@ -58,7 +59,8 @@ class TestModes(unittest.TestCase):
                                    can_up=False, clear_faults=False)
         self.assertEqual(rover[0], "ros2 launch chassis_bringup rover.launch.py mode:=real "
                                    "can_interface:=can3 fault_policy:=fault gear_ratio:=50 "
-                                   "vio:=true joy_control:=true status_light:=teleop")
+                                   "vio:=true arm_tf:=false joy_control:=true "
+                                   "status_light:=teleop")
         self.assertIn("joystick:=false", ground[0])
 
     def test_arm(self):
@@ -132,9 +134,9 @@ class TestModes(unittest.TestCase):
         self.assertIn("arm_tf:=false", rover[0])
         with self.assertRaises(modes.OptionError):
             modes.build("teleop-arm", {"arm_hw": "maybe"})
-        # Other modes leave arm_tf to rover.launch.py.
+        # Other modes turn the arm's TF off, so the arm doesn't show in their viewers.
         _, rover, _, _ = cmds("teleop-drive")
-        self.assertNotIn("arm_tf", rover[0])
+        self.assertIn("arm_tf:=false", rover[0])
 
     def test_arm_hw_saved_as_bool(self):
         # Values saved when arm_hw was a checkbox still work.
